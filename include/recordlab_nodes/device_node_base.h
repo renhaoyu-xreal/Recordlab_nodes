@@ -1,8 +1,10 @@
 #pragma once
 
 #include "recordlab_nodes/device_adapters.h"
-#include "recordlab_nodes/node_base.h"
+#include "recordlab_core/node_base.h"
+#include "recordlab_echo/echo.h"
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -27,6 +29,9 @@ class DeviceNodeBase : public NodeBase {
   void registerLifecycle(const std::string &prefix);
 
   std::unique_ptr<DeviceAdapter> adapter_;
+  std::unique_ptr<Publisher> state_pub_;
+  std::unique_ptr<ServiceServer> check_service_;
+  std::map<std::string, std::unique_ptr<ActionServer>> lifecycle_actions_;
   LifecycleState state_{LifecycleState::Disconnected};
   std::string health_{"unknown"};
   std::string message_;

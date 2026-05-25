@@ -1,6 +1,6 @@
 #include "recordlab_nodes/device_node_base.h"
 
-#include "recordlab_master/shm_ring_buffer.h"
+#include "recordlab_echo/shm_ring_buffer.h"
 
 namespace recordlab::nodes {
 
@@ -23,7 +23,12 @@ bool DeviceNodeBase::start() {
 }
 
 void DeviceNodeBase::registerStateTopic(const std::string &topic) {
-  client_.registerPublisher({{"node", node_name_}, {"topic", topic}, {"msg_type", "recordlab_msgs/DeviceState"}, {"transport", {{"type", "tcp_pubsub"}}}});
+  state_pub_ = std::make_unique<Publisher>(topic);
+  client_.registerPublisher({{"node", node_name_},
+                             {"topic", topic},
+                             {"msg_type", "recordlab_msgs/DeviceState"},
+                             {"transport", {{"type", "tcp_pubsub"},
+                                             {"endpoint", state_pub_->endpoint()}}}});
 }
 
 void DeviceNodeBase::registerShmTopic(const std::string &topic, const std::string &msg_type,
@@ -39,9 +44,21 @@ void DeviceNodeBase::registerShmTopic(const std::string &topic, const std::strin
 }
 
 void DeviceNodeBase::registerLifecycle(const std::string &prefix) {
-  client_.registerService({{"node", node_name_}, {"service", prefix + "/check"}, {"endpoint", "local://check"}});
+  check_service_ = std::make_unique<ServiceServer>(
+      [this](const json &request) { return callLifecycle("check", request); });
+  client_.registerService({{"node", node_name_},
+                           {"service", prefix + "/check"},
+                           {"endpoint", check_service_->endpoint()}});
   for (const auto &name : {"connect", "init", "start", "stop", "release", "close"}) {
-    client_.registerAction({{"node", node_name_}, {"action", prefix + "/" + std::string(name)}});
+    std::string op = name;
+    auto action = std::make_unique<ActionServer>(
+        [this, op](const json &goal, std::function<void(const json &)>, std::atomic<bool> &) {
+          return callLifecycle(op, goal);
+        });
+    client_.registerAction({{"node", node_name_},
+                            {"action", prefix + "/" + op},
+                            {"endpoints", action->descriptor()}});
+    lifecycle_actions_[op] = std::move(action);
   }
 }
 
@@ -57,6 +74,7 @@ json DeviceNodeBase::callLifecycle(const std::string &op, const json &params) {
   else r = {{"success", false}, {"message", "unknown lifecycle op"}};
   health_ = r.value("success", false) ? "ok" : "error";
   message_ = r.value("message", "");
+  if (state_pub_) state_pub_->publish(stateMessage());
   return r;
 }
 
@@ -65,6 +83,7 @@ json DeviceNodeBase::stateMessage() const {
           {"lifecycle_state", toString(state_)},
           {"health", health_},
           {"message", message_},
+          {"device_info", adapter_ ? adapter_->deviceInfo() : json::object()},
           {"timestamp_ms", nowMs()}};
 }
 

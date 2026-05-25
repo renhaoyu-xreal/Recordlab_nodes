@@ -43,6 +43,7 @@ class DeviceAdapter {
   virtual json stop() = 0;
   virtual json release() = 0;
   virtual json close() = 0;
+  virtual json deviceInfo() const { return json::object(); }
 };
 
 class SimulatedDeviceAdapter : public DeviceAdapter {
