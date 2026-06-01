@@ -9,8 +9,13 @@
       "goal_port": 5690,
       "feedback_port": 5691,
       "root_path": "data",
-      "init_device_params": {},
+      "init_device_params": {
+        "read_path": "data/samples/imu_0.csv"
+      },
       "init_device_pause_duration": 0.1,
+      "default_scripts": [
+        "imu_simulation_record_demo.py"
+      ],
       "topics": [
         {"name": "imu_data", "port": 16510, "encoding": "json"},
         {"name": "record_timer", "port": 16520, "encoding": "json"},

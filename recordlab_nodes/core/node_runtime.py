@@ -2,14 +2,13 @@ import argparse
 import importlib
 import json
 import signal
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict
 
-ECHO_PYTHON = Path("/home/hyren/echo_message_system/python")
-if ECHO_PYTHON.exists() and str(ECHO_PYTHON) not in sys.path:
-    sys.path.insert(0, str(ECHO_PYTHON))
+from recordlab_nodes.common.paths import ensure_echo_python_on_path, resolve_agent_paths
+
+ensure_echo_python_on_path()
 
 from message_system import ActionServer, GoalStatus  # noqa: E402
 
@@ -17,12 +16,15 @@ from .publishers import PublisherManager
 
 
 def load_agent_config(config_path: str, agent_name: str) -> Dict[str, Any]:
-    with open(config_path, "r", encoding="utf-8") as fh:
+    config_file = Path(config_path).expanduser().resolve()
+    with open(config_file, "r", encoding="utf-8") as fh:
         config = json.load(fh)
     try:
-        return config["agents"][agent_name]
+        item = config["agents"][agent_name]
     except KeyError as exc:
         raise KeyError(f"Agent not found in config: {agent_name}") from exc
+    config_base = config_file.parent.parent if config_file.parent.name == "config" else config_file.parent
+    return resolve_agent_paths(item, config_base)
 
 
 def import_node_class(path: str):
@@ -63,7 +65,6 @@ class NodeRuntime:
         params = goal_data.get("params", {})
         handler = getattr(self.node, cmd, None)
         if handler is None or not callable(handler):
-            self._before_result_publish()
             server.send_result(
                 goal_id,
                 {"success": False, "message": f"Command not found: {cmd}"},
@@ -75,16 +76,9 @@ class NodeRuntime:
             if not isinstance(result, dict):
                 result = {"success": True, "result": result}
             status = GoalStatus.SUCCEEDED if result.get("success", True) else GoalStatus.FAILED
-            self._before_result_publish()
             server.send_result(goal_id, result, status)
         except Exception as exc:
-            self._before_result_publish()
             server.send_result(goal_id, {"success": False, "message": str(exc)}, GoalStatus.FAILED)
-
-    def _before_result_publish(self) -> None:
-        delay_ms = int(self.agent_config.get("result_publish_delay_ms", 20))
-        if delay_ms > 0:
-            time.sleep(delay_ms / 1000.0)
 
     def stop(self) -> None:
         if self._stopping:

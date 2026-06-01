@@ -1,12 +1,9 @@
 import time
-from pathlib import Path
-import sys
 from typing import Any, Dict
 
-ECHO_PYTHON = Path("/home/hyren/echo_message_system/python")
-if ECHO_PYTHON.exists() and str(ECHO_PYTHON) not in sys.path:
-    sys.path.insert(0, str(ECHO_PYTHON))
+from recordlab_nodes.common.paths import ensure_echo_python_on_path
 
+ensure_echo_python_on_path()
 from message_system import Publisher  # noqa: E402
 
 

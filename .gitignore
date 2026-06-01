@@ -1,5 +1,7 @@
 build/
 data/
+__pycache__/
+*.pyc
 *.o
 *.a
 *.so

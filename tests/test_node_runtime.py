@@ -7,7 +7,8 @@ import sys
 import time
 from pathlib import Path
 
-ECHO_PYTHON = Path("/home/hyren/echo_message_system/python")
+ROOT = Path(__file__).resolve().parents[1]
+ECHO_PYTHON = Path(os.environ.get("ECHO_MESSAGE_SYSTEM_PYTHON_ROOT", str(ROOT.parent / "echo_message_system" / "python")))
 if str(ECHO_PYTHON) not in sys.path:
     sys.path.insert(0, str(ECHO_PYTHON))
 
@@ -81,10 +82,10 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
     }), encoding="utf-8")
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = f"/home/hyren/Recordlab_nodes:{ECHO_PYTHON}:{env.get('PYTHONPATH', '')}"
+    env["PYTHONPATH"] = f"{ROOT}:{ECHO_PYTHON}:{env.get('PYTHONPATH', '')}"
     proc = subprocess.Popen(
         [sys.executable, "-m", "recordlab_nodes.core.node_runtime", "--config", str(config_path), "--agent", "imu_test"],
-        cwd="/home/hyren/Recordlab_nodes",
+        cwd=ROOT,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -102,6 +103,7 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
         )
         assert client.wait_for_server(timeout=5000)
         client.start_listening()
+        time.sleep(0.2)
 
         messages = []
         sub = Subscriber("imu_test_sub", "imu_data", lambda topic, data: messages.append(data), port=imu_port)
@@ -186,14 +188,14 @@ def test_two_node_runtimes_are_isolated(tmp_path):
     config_path = tmp_path / "agents_config.json"
     config_path.write_text(json.dumps({"agents": agents, "primary_agents": ["imu_a", "imu_b"]}), encoding="utf-8")
     env = os.environ.copy()
-    env["PYTHONPATH"] = f"/home/hyren/Recordlab_nodes:{ECHO_PYTHON}:{env.get('PYTHONPATH', '')}"
+    env["PYTHONPATH"] = f"{ROOT}:{ECHO_PYTHON}:{env.get('PYTHONPATH', '')}"
     procs = []
     clients = []
     try:
         for name in ("imu_a", "imu_b"):
             proc = subprocess.Popen(
                 [sys.executable, "-m", "recordlab_nodes.core.node_runtime", "--config", str(config_path), "--agent", name],
-                cwd="/home/hyren/Recordlab_nodes",
+                cwd=ROOT,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -212,6 +214,7 @@ def test_two_node_runtimes_are_isolated(tmp_path):
             )
             assert client.wait_for_server(timeout=5000)
             client.start_listening()
+            time.sleep(0.2)
             clients.append((name, client))
 
         for name, client in clients:
