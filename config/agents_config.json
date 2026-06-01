@@ -1,0 +1,24 @@
+{
+  "agents": {
+    "imu_simulation": {
+      "name": "imu_simulation",
+      "node_class": "recordlab_nodes.nodes.imu_sim.imu_sim_node.ImuSimNode",
+      "process_type": "python_node",
+      "subnode_host": "127.0.0.1",
+      "action_name": "imu_simulation_actions",
+      "goal_port": 5690,
+      "feedback_port": 5691,
+      "root_path": "data",
+      "init_device_params": {},
+      "init_device_pause_duration": 0.1,
+      "topics": [
+        {"name": "imu_data", "port": 16510, "encoding": "json"},
+        {"name": "record_timer", "port": 16520, "encoding": "json"},
+        {"name": "time_delay", "port": 16521, "encoding": "json"},
+        {"name": "motion_status", "port": 16525, "encoding": "json"}
+      ],
+      "custom_params": {}
+    }
+  },
+  "primary_agents": ["imu_simulation"]
+}
