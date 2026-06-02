@@ -15,11 +15,19 @@ class PublisherManager:
 
     def start(self) -> None:
         for topic_name, cfg in self.topic_configs.items():
+            qos = cfg.get("qos", {}) or {}
+            history = str(qos.get("history", "")).lower()
+            depth = int(qos.get("depth", 0) or 0)
+            drop_when_busy = bool(qos.get("drop_when_busy", history == "latest"))
             pub = Publisher(
                 name=f"{self.node_name}/{topic_name}",
                 topic=topic_name,
                 port=int(cfg["port"]),
                 encoding=cfg.get("encoding", "json"),
+                send_hwm=int(qos.get("send_hwm", depth if depth > 0 else 10000)),
+                send_timeout_ms=int(qos.get("send_timeout_ms", 0 if drop_when_busy else 100)),
+                linger_ms=int(qos.get("linger_ms", 0)),
+                drop_when_busy=drop_when_busy,
             )
             pub.start()
             self.publishers[topic_name] = pub
