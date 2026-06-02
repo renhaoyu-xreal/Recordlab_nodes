@@ -23,7 +23,40 @@
         {"name": "motion_status", "port": 16525, "encoding": "json"}
       ],
       "custom_params": {}
+    },
+    "glasses_bsp_node": {
+      "name": "glasses_bsp_node",
+      "node_class": "recordlab_nodes.nodes.bsp.bsp_main_node.BspMainNode",
+      "process_type": "python_node",
+      "subnode_host": "127.0.0.1",
+      "action_name": "glasses_bsp_actions",
+      "goal_port": 5700,
+      "feedback_port": 5701,
+      "root_path": "data",
+      "init_device_params": {},
+      "init_device_pause_duration": 0.5,
+      "default_scripts": [
+        "record_bsp_imu.py",
+        "record_bsp_imu_cam.py",
+        "record_bsp_imu_static.py",
+        "record_bsp_imu_dynamic.py",
+        "record_bsp_rgb.py",
+        "record_bsp_rgb_raw.py"
+      ],
+      "topics": [
+        {"name": "imu_data", "port": 16510, "encoding": "json"},
+        {"name": "camera_data", "port": 16515, "encoding": "json_binary"},
+        {"name": "record_timer", "port": 16520, "encoding": "json"},
+        {"name": "time_delay", "port": 16521, "encoding": "json"},
+        {"name": "motion_status", "port": 16525, "encoding": "json"}
+      ],
+      "custom_params": {
+        "ssh_host": "169.254.2.1",
+        "ssh_port": 22,
+        "ssh_username": "root",
+        "ssh_password": "xreal2017"
+      }
     }
   },
-  "primary_agents": ["imu_simulation"]
+  "primary_agents": ["imu_simulation", "glasses_bsp_node"]
 }

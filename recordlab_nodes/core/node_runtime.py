@@ -33,10 +33,21 @@ def import_node_class(path: str):
     return getattr(module, class_name)
 
 
+def ensure_qcore_application():
+    from PySide6.QtCore import QCoreApplication
+
+    app = QCoreApplication.instance()
+    if app is None:
+        app = QCoreApplication([])
+    return app
+
+
 class NodeRuntime:
     def __init__(self, agent_config: Dict[str, Any]):
         self.agent_config = agent_config
-        self.node = import_node_class(agent_config["node_class"])(agent_config)
+        self.node_class = import_node_class(agent_config["node_class"])
+        self.qt_app = ensure_qcore_application() if getattr(self.node_class, "requires_qt_event_loop", False) else None
+        self.node = self.node_class(agent_config)
         self.publisher_manager = PublisherManager(
             node_name=agent_config["name"],
             topic_configs=agent_config.get("topics", []),
@@ -90,8 +101,18 @@ class NodeRuntime:
             if self._action_server:
                 self._action_server.close()
             self.publisher_manager.close()
+            if self.qt_app is not None:
+                self.qt_app.quit()
 
     def spin(self) -> None:
+        if self.qt_app is not None:
+            from PySide6.QtCore import QTimer
+
+            timer = QTimer()
+            timer.timeout.connect(lambda: None)
+            timer.start(500)
+            self.qt_app.exec()
+            return
         while not self._stopping:
             time.sleep(0.1)
 
