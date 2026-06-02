@@ -9,7 +9,8 @@ from recordlab_nodes.core.main_node import MainNode
 from recordlab_nodes.core.record_writers import CsvDataWriter
 
 from .bsp_aux_workers import MicRecordWorker, ScreenCaptureWorker
-from .bsp_device import BspDevice, XrGlassesSSHManager
+from .bsp_device import BspDevice
+from recordlab_nodes.common.device_checker import XrGlassesSSHManager
 from .bsp_writers import CameraSnapshotWorker, SlamImageDataWriter, qimage_to_wire
 
 IMU_TYPE_TO_INDEX = {

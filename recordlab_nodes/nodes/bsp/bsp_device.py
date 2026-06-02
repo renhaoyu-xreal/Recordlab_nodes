@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QMutex, Qt, QWaitCondition, Signal
 from xrglasses import XrGlasses as Xr
 
 from recordlab_nodes.common.logger_config import get_logger
+from recordlab_nodes.common.device_checker import XrGlassesSSHManager
 
 from .bsp_aux_workers import XrSshConfig
 
@@ -224,65 +225,6 @@ class GlassesQtBridge(QObject):
     def _on_cam_slot(self, sensor_type, image_pair) -> None:
         if self.image_callback:
             self.image_callback(sensor_type, image_pair)
-
-
-class XrGlassesSSHManager(XrSshConfig):
-    def ping(self) -> bool:
-        try:
-            result = subprocess.run(["ping", "-c", "1", "-W", "1", self.hostname], capture_output=True, text=True, timeout=2)
-            return result.returncode == 0
-        except Exception:
-            return False
-
-    def connect(self, timeout_s: float = 5.0) -> paramiko.SSHClient:
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(self.hostname, port=self.port, username=self.username, password=self.password, timeout=timeout_s)
-        return ssh
-
-    def check_connection(self, timeout_s: float = 5.0) -> bool:
-        try:
-            ssh = self.connect(timeout_s)
-            ssh.close()
-            return True
-        except Exception:
-            return False
-
-    def check_and_wait_restarted(self, timeout_s: float = 5.0) -> Dict[str, Any]:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            if self.check_connection(timeout_s=2.0):
-                return {"success": True, "message": ""}
-            time.sleep(0.5)
-        return {"success": False, "message": "SSH connection failed"}
-
-    def save_getprop(self, record_path: Path) -> None:
-        try:
-            ssh = self.connect(5.0)
-            stdin, stdout, stderr = ssh.exec_command("/usr/usrdata/bin/getprop", timeout=10)
-            out = stdout.read().decode("utf-8", errors="ignore")
-            err = stderr.read().decode("utf-8", errors="ignore")
-            ssh.close()
-            with open(record_path / "record_info.txt", "a", encoding="utf-8") as fh:
-                fh.write(time.strftime("%Y%m%d%H%M%S") + "\n")
-                fh.write(out)
-                if err:
-                    fh.write("\n[stderr]\n" + err)
-        except Exception as exc:
-            logger.warning("[XrGlassesSSHManager] save_getprop failed: %s", exc)
-
-    def fetch_glass_config(self, record_path: Path) -> None:
-        try:
-            ssh = self.connect(5.0)
-            sftp = ssh.open_sftp()
-            try:
-                sftp.get("/factory/glasses_config.json", str(record_path / "glasses_config.json"))
-                sftp.get("/factory/glasses_config.json", str(record_path / "glass_config.json"))
-            finally:
-                sftp.close()
-                ssh.close()
-        except Exception as exc:
-            logger.warning("[XrGlassesSSHManager] fetch_glass_config failed: %s", exc)
 
 
 class BspDevice:
