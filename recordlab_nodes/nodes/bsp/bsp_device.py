@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, QMutex, Qt, QWaitCondition, Signal
 from xrglasses import XrGlasses as Xr
 
 from recordlab_nodes.common.logger_config import get_logger
-from recordlab_nodes.common.device_checker import XrGlassesSSHManager
+from recordlab_nodes.common.device_checker import LsusbChecker, XrGlassesSSHManager
 
 from .bsp_aux_workers import XrSshConfig
 
@@ -232,6 +232,7 @@ class BspDevice:
         self.imu_callback: Optional[Callable] = None
         self.image_callback: Optional[Callable] = None
         self.ssh_manager = ssh_manager or XrGlassesSSHManager()
+        self.lsusb_checker = LsusbChecker()
         self.bridge = GlassesQtBridge()
         self.initialized = False
         self.started = False
@@ -345,9 +346,22 @@ class BspDevice:
         return {"success": True, "message": ""}
 
     def check(self) -> Dict[str, Any]:
+        # Default: use lsusb for fast, local device detection.
+        lsusb_info = self.lsusb_checker.check()
+        if lsusb_info.get("connected"):
+            catalog = lsusb_info.get("catalog", {}) or {}
+            return {
+                "success": True,
+                "message": "",
+                "method": "lsusb",
+                "device_name": catalog.get("display_name", catalog.get("name", "")),
+                "agent_name": catalog.get("agent_name", ""),
+                "default_connection": catalog.get("default_connection", "lsusb"),
+            }
+        # Fallback: try SSH for glasses on network.
         if self.ssh_manager.ping() or self.ssh_manager.check_connection(timeout_s=2.0):
-            return {"success": True, "message": ""}
-        return {"success": False, "message": "SSH connection failed"}
+            return {"success": True, "message": "", "method": "ssh"}
+        return {"success": False, "message": "Device not found (lsusb + SSH)"}
 
     def get_runtime_state(self) -> Dict[str, Any]:
         if self.initialized:

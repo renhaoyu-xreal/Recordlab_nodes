@@ -2,15 +2,20 @@
 Device presence checkers for XREAL glasses.
 
 XrGlassesSSHManager:  SSH-based connectivity check (ping, SSH connection).
-LsusbChecker:         lsusb-based USB device detection.
+LsusbChecker:         lsusb-based USB device detection with product catalog.
 
-All checkers expose a uniform `check()` → bool interface so BspDevice
-can try multiple strategies in order.
+The catalog maps (vid, pid) tuples to device metadata so callers can
+identify exactly which glasses model is connected and choose an
+appropriate agent.
+
+All checkers expose a `check()` → dict interface so BspDevice can try
+multiple strategies in order.  The return value is always
+{"connected": bool, ...} so callers can uniformly query.
 """
 
 import subprocess
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import paramiko
 
@@ -19,7 +24,57 @@ from recordlab_nodes.common.logger_config import get_logger
 logger = get_logger(__name__)
 
 
-# ── SSH manager (kept from original bsp_device.py) ─────────────
+# ── USB product catalog ────────────────────────────────────────
+
+# Each entry describes one XREAL glasses model.
+# Fields:
+#   vid, pid   USB vendor/product ids (strings like "0x3318").
+#   name       Primary codename.
+#   names      List of codenames (for models that share a pid).
+#   display_name  Human-readable label.
+#   agent_name    Which agent config key to activate for this model.
+#   default_connection  "lsusb" | "ssh" — preferred check strategy.
+#   ssh_preferred  Deprecated alias for default_connection="ssh".
+_USB_PRODUCT_CATALOG: List[Dict[str, Any]] = [
+    {"vid": "0x3318", "pid": "0x0420", "names": ["Air", "P55", "Flora"],
+     "display_name": "Air/P55/Flora", "agent_name": "",
+     "default_connection": "lsusb"},
+    {"vid": "0x0000", "pid": "0x1012", "name": "Ada", "agent_name": "",
+     "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x0433", "name": "Charlie", "agent_name": "",
+     "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x0434", "name": "CORE", "agent_name": "",
+     "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x0436", "name": "Gina",
+     "agent_name": "glasses_nviz_node", "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x0438", "name": "GF",
+     "agent_name": "glasses_nviz_node", "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x043a", "name": "Hylla",
+     "agent_name": "glasses_nviz_node", "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x043c", "name": "Core Pro", "agent_name": "",
+     "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x043e", "name": "GS",
+     "agent_name": "glasses_nviz_node", "default_connection": "lsusb"},
+    {"vid": "0x0b05", "pid": "0x1d9d", "name": "Glory",
+     "agent_name": "glasses_nviz_node", "default_connection": "lsusb"},
+    {"vid": "0x3318", "pid": "0x0440", "names": ["Helen", "Helen Pro"],
+     "display_name": "Helen/Helen Pro", "agent_name": "helen_node",
+     "default_connection": "lsusb"},
+]
+
+
+def _normalise_hex(s: str) -> int:
+    return int(s, 16)
+
+
+def _find_catalog_entry(vid: int, pid: int) -> Optional[Dict[str, Any]]:
+    for entry in _USB_PRODUCT_CATALOG:
+        if _normalise_hex(entry["vid"]) == vid and _normalise_hex(entry["pid"]) == pid:
+            return entry
+    return None
+
+
+# ── SSH manager ────────────────────────────────────────────────
 
 class XrGlassesSSHManager:
     """Manage connectivity checks via SSH to the glasses."""
@@ -42,9 +97,10 @@ class XrGlassesSSHManager:
         except Exception:
             return False
 
-    def check(self) -> bool:
-        """Return True if the glasses are reachable via SSH."""
-        return self.check_connection(timeout_s=5.0)
+    def check(self) -> Dict[str, Any]:
+        """Return {"connected": bool, ...}."""
+        ok = self.check_connection(timeout_s=5.0)
+        return {"connected": ok, "method": "ssh", "hostname": self.hostname}
 
     def connect(self, timeout_s: float = 5.0) -> paramiko.SSHClient:
         ssh = paramiko.SSHClient()
@@ -122,33 +178,99 @@ class XrGlassesSSHManager:
 
 class LsusbChecker:
     """
-    Detect XREAL glasses via lsusb.
+    Detect XREAL glasses via lsusb and the USB product catalog.
 
-    Typical XREAL VID values:
-        - 0x3318  (XR AG)
-        - 0x0483  (STMicroelectronics — some dev boards)
+    Usage::
+
+        checker = LsusbChecker()
+        info = checker.check()
+        if info["connected"]:
+            print(info["catalog"]["display_name"])   # e.g. "Air/P55/Flora"
+            print(info["catalog"]["agent_name"])      # e.g. "glasses_nviz_node"
+            print(info["catalog"]["default_connection"])  # e.g. "lsusb"
     """
-
-    # Known XREAL vendor ids (VID).
-    XREAL_VIDS = {0x3318, 0x0483}
 
     def __init__(self):
         self._last_output: str = ""
+        self._last_info: Dict[str, Any] = {"connected": False,
+                                             "method": "lsusb"}
 
-    def check(self) -> bool:
-        """Return True if any XREAL USB device is present."""
+    def check(self) -> Dict[str, Any]:
+        """
+        Run lsusb and look up every visible (vid, pid) pair against the
+        product catalog.  Returns::
+
+            {
+                "connected": bool,
+                "method": "lsusb",
+                "raw_output": "...",           # full lsusb output
+                "devices": [                   # list of matched entries
+                    {
+                        "vid": "0x3318",
+                        "pid": "0x0420",
+                        "catalog": {...},      # the matching catalog dict
+                    },
+                    ...
+                ],
+                # convenience shortcuts for the *first* matched device:
+                "catalog": {...},              # first match
+                "agent_name": "...",
+                "default_connection": "lsusb"|"ssh",
+            }
+        """
+        self._last_output = ""
         try:
             result = subprocess.run(
                 ["lsusb"], capture_output=True, text=True, timeout=3,
             )
             self._last_output = result.stdout
         except Exception:
-            return False
+            self._last_info = {"connected": False, "method": "lsusb",
+                               "raw_output": self._last_output}
+            return self._last_info
 
-        for vid in self.XREAL_VIDS:
-            if f"{vid:04x}:" in self._last_output.lower():
-                return True
-        return False
+        # Parse lsusb output: each line is "Bus NNN Device NNN: ID vvvv:pppp ..."
+        matched: List[Dict[str, Any]] = []
+        for line in self._last_output.splitlines():
+            # Extract "ID vvvv:pppp"
+            if "ID " not in line:
+                continue
+            id_part = line.split("ID ", 1)[1].split(None, 1)[0]  # "vvvv:pppp"
+            try:
+                vid_str, pid_str = id_part.split(":")
+            except ValueError:
+                continue
+            try:
+                vid = int(vid_str, 16)
+                pid = int(pid_str, 16)
+            except ValueError:
+                continue
+            entry = _find_catalog_entry(vid, pid)
+            if entry is not None:
+                matched.append({
+                    "vid": f"0x{vid:04x}",
+                    "pid": f"0x{pid:04x}",
+                    "catalog": entry,
+                })
+
+        info: Dict[str, Any] = {
+            "connected": len(matched) > 0,
+            "method": "lsusb",
+            "raw_output": self._last_output,
+            "devices": matched,
+        }
+        if matched:
+            first = matched[0]["catalog"]
+            info["catalog"] = first
+            info["agent_name"] = first.get("agent_name", "")
+            info["default_connection"] = first.get("default_connection", "lsusb")
+        else:
+            info["catalog"] = None
+            info["agent_name"] = ""
+            info["default_connection"] = "lsusb"
+
+        self._last_info = info
+        return info
 
     def raw_output(self) -> str:
         """Return the last lsusb output for debugging."""
