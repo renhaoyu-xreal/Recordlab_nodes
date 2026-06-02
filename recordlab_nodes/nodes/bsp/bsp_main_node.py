@@ -11,7 +11,7 @@ from recordlab_nodes.core.record_writers import CsvDataWriter
 from .bsp_aux_workers import MicRecordWorker, ScreenCaptureWorker
 from .bsp_device import BspDevice
 from recordlab_nodes.common.device_checker import XrGlassesSSHManager
-from .bsp_writers import CameraSnapshotWorker, SlamImageDataWriter, qimage_to_wire
+from .bsp_writers import CameraSharedMemoryWriter, CameraSnapshotWorker, SlamImageDataWriter
 
 IMU_TYPE_TO_INDEX = {
     1: 0,
@@ -49,6 +49,7 @@ class BspMainNode(MainNode):
             1: CsvDataWriter(filename="imu_1.csv", buffer_size=50),
         }
         self.image_writer = SlamImageDataWriter(buffer_size=50)
+        self.camera_shm_writer = CameraSharedMemoryWriter()
         self.camera_snapshot_worker: Optional[CameraSnapshotWorker] = None
         self.screen_capture_worker: Optional[ScreenCaptureWorker] = None
         self.mic_record_worker: Optional[MicRecordWorker] = None
@@ -70,6 +71,7 @@ class BspMainNode(MainNode):
     def shutdown(self) -> None:
         self.estop({})
         self.device.release()
+        self.camera_shm_writer.close(unlink=True)
 
     def init_device(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return self.device.initialize(params or {})
@@ -248,12 +250,16 @@ class BspMainNode(MainNode):
         publish_msg = {"timestamp": image_msg.get("timestamp"), "cam_data": {}}
         now_ns = time.time_ns()
         for idx, cam_info in image_msg.get("cam_data", {}).items():
-            wire = qimage_to_wire(cam_info.get("image"))
-            if not wire:
+            try:
+                cam_idx = int(idx)
+            except Exception:
+                continue
+            seq, image_meta = self.camera_shm_writer.write_qimage(cam_idx, cam_info.get("image"))
+            if not image_meta:
                 continue
             item = {k: v for k, v in cam_info.items() if k != "image"}
-            item["image"] = wire
-            item["image_raw"] = wire
+            item["image"] = image_meta
+            item["image_raw"] = image_meta
             publish_msg["cam_data"][str(idx)] = item
             if self.camera_snapshot_worker and self._should_publish(
                 now_ns,
@@ -265,4 +271,5 @@ class BspMainNode(MainNode):
         if publish_msg["cam_data"]:
             self.publish(TOPIC_CAMERA, publish_msg)
         if self.recording:
+            # Recording keeps the SDK-origin image_msg; preview compression above never touches this path.
             self.image_writer.write_data(image_msg)

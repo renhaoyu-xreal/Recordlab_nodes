@@ -1,12 +1,23 @@
 import queue
+import struct
 import threading
 import time
+from multiprocessing import shared_memory
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from recordlab_nodes.common.logger_config import get_logger
 
 logger = get_logger(__name__)
+
+
+CAMERA_SHM_NAME = "recordlab_camera_shm_v1"
+CAMERA_SHM_CAM_COUNT = 2
+CAMERA_SHM_SLOT_COUNT = 4
+CAMERA_SHM_META_SIZE = 64
+CAMERA_SHM_SLOT_SIZE = 4 * 1024 * 1024
+CAMERA_SHM_SEQ_SIZE = CAMERA_SHM_CAM_COUNT * CAMERA_SHM_SLOT_COUNT * 8
+CAMERA_SHM_TOTAL_SIZE = CAMERA_SHM_SEQ_SIZE + CAMERA_SHM_CAM_COUNT * CAMERA_SHM_SLOT_COUNT * CAMERA_SHM_SLOT_SIZE
 
 
 def exposure_middle_time_ns(cam_info: Dict[str, Any]) -> int:
@@ -118,38 +129,208 @@ class SlamImageDataWriter:
         self.cam_counters = {}
 
 
+class CameraSharedMemoryWriter:
+    """Writes raw preview frames into POSIX shared memory.
+
+    The echo topic carries only metadata and shm_seq; frame bytes live here.
+    Layout matches the C++ host reader:
+      seq[camera][slot]: uint64 little-endian
+      slot header: width,height,qt_format,data_size,bytes_per_line,encoding
+      slot payload: raw QImage bytes
+    """
+
+    def __init__(self, name: str = CAMERA_SHM_NAME):
+        self.name = name
+        self.shm: Optional[shared_memory.SharedMemory] = None
+        self.frame_seq = {idx: 0 for idx in range(CAMERA_SHM_CAM_COUNT)}
+        self.warned_create_failure = False
+
+    def ensure_open(self) -> bool:
+        if self.shm is not None:
+            return True
+        try:
+            try:
+                self.shm = shared_memory.SharedMemory(
+                    name=self.name,
+                    create=True,
+                    size=CAMERA_SHM_TOTAL_SIZE,
+                )
+            except FileExistsError:
+                self.shm = shared_memory.SharedMemory(name=self.name, create=False)
+                if self.shm.size < CAMERA_SHM_TOTAL_SIZE:
+                    self.shm.close()
+                    self.shm = None
+                    try:
+                        stale = shared_memory.SharedMemory(name=self.name, create=False)
+                        stale.unlink()
+                        stale.close()
+                    except Exception:
+                        pass
+                    self.shm = shared_memory.SharedMemory(
+                        name=self.name,
+                        create=True,
+                        size=CAMERA_SHM_TOTAL_SIZE,
+                    )
+            self.shm.buf[:CAMERA_SHM_TOTAL_SIZE] = b"\0" * CAMERA_SHM_TOTAL_SIZE
+            self.frame_seq = {idx: 0 for idx in range(CAMERA_SHM_CAM_COUNT)}
+            logger.info(
+                "[CameraSHM] opened name=%s cameras=%s slots=%s slot_size=%s",
+                self.name,
+                CAMERA_SHM_CAM_COUNT,
+                CAMERA_SHM_SLOT_COUNT,
+                CAMERA_SHM_SLOT_SIZE,
+            )
+            return True
+        except Exception as exc:
+            if not self.warned_create_failure:
+                logger.warning("[CameraSHM] open failed: %s", exc, exc_info=True)
+                self.warned_create_failure = True
+            self.close(unlink=False)
+            return False
+
+    def write_qimage(self, cam_idx: int, qimg: Any) -> Tuple[int, Optional[Dict[str, Any]]]:
+        if qimg is None or cam_idx < 0 or cam_idx >= CAMERA_SHM_CAM_COUNT:
+            return 0, None
+        if not self.ensure_open() or self.shm is None:
+            return 0, None
+        try:
+            from PySide6.QtGui import QImage
+
+            gray8 = getattr(QImage, "Format_Grayscale8", None) or QImage.Format.Format_Grayscale8
+            rgb888 = getattr(QImage, "Format_RGB888", None) or QImage.Format.Format_RGB888
+            target_format = gray8 if qimg.isGrayscale() else rgb888
+            image = qimg.convertToFormat(target_format)
+            width = int(image.width())
+            height = int(image.height())
+            bytes_per_line = int(image.bytesPerLine())
+            data_size = bytes_per_line * height
+            if width <= 0 or height <= 0 or data_size <= 0:
+                return 0, None
+            if CAMERA_SHM_META_SIZE + data_size > CAMERA_SHM_SLOT_SIZE:
+                logger.warning(
+                    "[CameraSHM] frame too large cam=%s size=%s slot=%s",
+                    cam_idx,
+                    data_size,
+                    CAMERA_SHM_SLOT_SIZE,
+                )
+                return 0, None
+
+            seq = self.frame_seq.get(cam_idx, 0) + 1
+            slot_idx = seq % CAMERA_SHM_SLOT_COUNT
+            slot_offset = (
+                CAMERA_SHM_SEQ_SIZE
+                + (cam_idx * CAMERA_SHM_SLOT_COUNT + slot_idx) * CAMERA_SHM_SLOT_SIZE
+            )
+            fmt = image.format()
+            fmt_value = int(fmt.value) if hasattr(fmt, "value") else int(fmt)
+            struct.pack_into(
+                "<IIIIII",
+                self.shm.buf,
+                slot_offset,
+                width,
+                height,
+                fmt_value,
+                data_size,
+                bytes_per_line,
+                0,
+            )
+
+            bits = image.constBits()
+            payload_offset = slot_offset + CAMERA_SHM_META_SIZE
+            try:
+                source = memoryview(bits)[:data_size]
+                self.shm.buf[payload_offset:payload_offset + data_size] = source
+            except Exception:
+                try:
+                    bits.setsize(data_size)
+                except Exception:
+                    pass
+                self.shm.buf[payload_offset:payload_offset + data_size] = bytes(bits)[:data_size]
+
+            seq_offset = (cam_idx * CAMERA_SHM_SLOT_COUNT + slot_idx) * 8
+            struct.pack_into("<Q", self.shm.buf, seq_offset, seq)
+            self.frame_seq[cam_idx] = seq
+            return seq, {
+                "width": width,
+                "height": height,
+                "format": fmt_value,
+                "bytes_per_line": bytes_per_line,
+                "data_size": data_size,
+                "encoding": "shm_raw",
+                "shm": True,
+                "shm_name": self.name,
+                "shm_seq": seq,
+                "shm_slot_size": CAMERA_SHM_SLOT_SIZE,
+            }
+        except Exception as exc:
+            logger.warning("[CameraSHM] write failed cam=%s: %s", cam_idx, exc, exc_info=True)
+            return 0, None
+
+    def close(self, unlink: bool = True) -> None:
+        shm = self.shm
+        self.shm = None
+        if shm is None:
+            return
+        try:
+            shm.close()
+        except Exception:
+            pass
+        if unlink:
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                logger.debug("[CameraSHM] unlink skipped", exc_info=True)
+
+
 def qimage_to_wire(qimg: Any) -> Optional[Dict[str, Any]]:
     if qimg is None:
         return None
     try:
+        from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
         from PySide6.QtGui import QImage
 
         gray8 = getattr(QImage, "Format_Grayscale8", None) or QImage.Format.Format_Grayscale8
         rgb888 = getattr(QImage, "Format_RGB888", None) or QImage.Format.Format_RGB888
         target_format = gray8 if qimg.isGrayscale() else rgb888
         image = qimg.convertToFormat(target_format)
+        original_width = int(image.width())
+        original_height = int(image.height())
+        max_width = 320
+        if original_width > max_width:
+            image = image.scaled(
+                max_width,
+                max(1, int(original_height * max_width / original_width)),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
         width = int(image.width())
         height = int(image.height())
-        bytes_per_pixel = 1 if image.format() == gray8 else 3
-        packed_bpl = width * bytes_per_pixel
-        src_bpl = int(image.bytesPerLine())
-        raw = image.bits().tobytes()
-        if src_bpl == packed_bpl:
-            packed = raw[: height * packed_bpl]
-        else:
-            rows = []
-            for row in range(height):
-                start = row * src_bpl
-                rows.append(raw[start:start + packed_bpl])
-            packed = b"".join(rows)
+        byte_array = QByteArray()
+        buffer = QBuffer(byte_array)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        encoding = "jpeg"
+        if not image.save(buffer, "JPG", 60):
+            buffer.close()
+            byte_array = QByteArray()
+            buffer = QBuffer(byte_array)
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            encoding = "png"
+            if not image.save(buffer, "PNG"):
+                return None
+        buffer.close()
         fmt = image.format()
         fmt_value = int(fmt.value) if hasattr(fmt, "value") else int(fmt)
         return {
             "width": width,
             "height": height,
+            "original_width": original_width,
+            "original_height": original_height,
             "format": fmt_value,
-            "bytes_per_line": packed_bpl,
-            "data": packed,
+            "encoding": encoding,
+            "bytes_per_line": 0,
+            "data": bytes(byte_array),
         }
     except Exception as exc:
         logger.warning("[qimage_to_wire] failed: %s", exc)

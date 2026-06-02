@@ -28,6 +28,21 @@ def coerce_bool(value: Any) -> bool:
     return bool(value)
 
 
+def all_sensor_types():
+    sensors = {
+        Xr.SensorType.Imu,
+        Xr.SensorType.Slam,
+        Xr.SensorType.Rgb,
+        Xr.SensorType.Display,
+        Xr.SensorType.Proximity,
+        Xr.SensorType.AmbientLight,
+    }
+    basler = getattr(Xr.SensorType, "Basler", None)
+    if basler is not None:
+        sensors.add(basler)
+    return sensors
+
+
 class GlassesQtBridge(QObject):
     create_signal = Signal()
     open_signal = Signal()
@@ -252,11 +267,37 @@ class BspDevice:
 
     def initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = params or {}
-        self.release()
-        if not coerce_bool(params.get("skip_restart_check")):
+        if coerce_bool(params.get("force_recover", True)):
+            recovery = self._recover_before_initialize(params)
+            if not recovery.get("success"):
+                return recovery
+        else:
+            self.release()
+            recovery = {"success": True, "recovered": False, "recovery_method": "none", "message": ""}
+
+        if recovery.get("sdk_handle_ready"):
+            self.bridge.set_callbacks(
+                self._on_imu_data if self.imu_callback else None,
+                self._on_cam_data if self.image_callback else None,
+            )
+            self.initialized = True
+            self._refresh_state()
+            return {
+                "success": True,
+                "message": recovery.get("message", ""),
+                "recovered": bool(recovery.get("recovered", False)),
+                "recovery_method": recovery.get("recovery_method", "none"),
+            }
+
+        # Determine connection strategy from lsusb catalog (default) or params.
+        connection = (params or {}).get("default_connection",
+                      self.lsusb_checker.check().get("default_connection", "lsusb"))
+
+        if connection == "ssh" and not recovery.get("recovered") and not coerce_bool(params.get("skip_restart_check")):
             ssh_result = self.ssh_manager.check_and_wait_restarted()
             if not ssh_result.get("success"):
                 return ssh_result
+
         result = self.bridge.create_glasses()
         if not result.get("success"):
             return result
@@ -270,7 +311,12 @@ class BspDevice:
             return result
         self.initialized = True
         self._refresh_state()
-        return {"success": True, "message": ""}
+        return {
+            "success": True,
+            "message": recovery.get("message", ""),
+            "recovered": bool(recovery.get("recovered", False)),
+            "recovery_method": recovery.get("recovery_method", "none"),
+        }
 
     def start(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.initialized:
@@ -308,6 +354,7 @@ class BspDevice:
     def release(self) -> Dict[str, Any]:
         try:
             if self.bridge.glasses:
+                self.bridge.stop_sensors(all_sensor_types())
                 self.bridge.disconnect_callbacks()
                 self.bridge.close_glasses()
             self.initialized = False
@@ -319,6 +366,124 @@ class BspDevice:
             return {"success": True, "message": ""}
         except Exception as exc:
             return {"success": False, "message": str(exc)}
+
+    def _recover_before_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self.release()
+
+        sdk_result = self._recover_with_sdk_handle()
+        if sdk_result.get("success"):
+            return sdk_result
+
+        if not coerce_bool(params.get("allow_ssh_reboot", True)):
+            return sdk_result
+
+        timeout_s = float(params.get("recovery_timeout_s", 20.0))
+        ssh_result = self._recover_with_ssh_reboot(timeout_s)
+        if ssh_result.get("success"):
+            return ssh_result
+
+        return {
+            "success": False,
+            "message": f"Device recovery failed: SDK={sdk_result.get('message', '')}; SSH={ssh_result.get('message', '')}",
+            "recovered": False,
+            "recovery_method": "none",
+        }
+
+    def _recover_with_sdk_handle(self) -> Dict[str, Any]:
+        result = self.bridge.create_glasses()
+        if not result.get("success"):
+            self.release()
+            return {
+                "success": False,
+                "message": result.get("message", "Failed to create glasses for recovery"),
+                "recovered": False,
+                "recovery_method": "none",
+            }
+
+        result = self.bridge.open_glasses()
+        if not result.get("success"):
+            self.release()
+            return {
+                "success": False,
+                "message": result.get("message", "Failed to open glasses for recovery"),
+                "recovered": False,
+                "recovery_method": "none",
+            }
+
+        stop_result = self.bridge.stop_sensors(all_sensor_types())
+        if not stop_result.get("success"):
+            self.release()
+            return {
+                "success": False,
+                "message": stop_result.get("message", "Failed to stop sensors during recovery"),
+                "recovered": False,
+                "recovery_method": "none",
+            }
+        self.initialized = False
+        self.started = False
+        self.device_state_cache = {}
+        self.latest_frame_state = {}
+        return {
+            "success": True,
+            "message": "Recovered device state via SDK",
+            "recovered": True,
+            "recovery_method": "sdk",
+            "sdk_handle_ready": True,
+        }
+
+    def _recover_with_ssh_reboot(self, timeout_s: float) -> Dict[str, Any]:
+        try:
+            ssh = self.ssh_manager.connect(timeout_s=3.0)
+        except Exception as exc:
+            return {
+                "success": False,
+                "message": f"SSH unavailable for recovery: {exc}",
+                "recovered": False,
+                "recovery_method": "none",
+            }
+
+        try:
+            try:
+                ssh.exec_command("sync; reboot", timeout=3)
+            finally:
+                ssh.close()
+        except Exception:
+            try:
+                ssh.close()
+            except Exception:
+                pass
+
+        time.sleep(1.0)
+        deadline = time.monotonic() + max(1.0, timeout_s)
+        while time.monotonic() < deadline:
+            try:
+                if self.lsusb_checker.check().get("connected"):
+                    return {
+                        "success": True,
+                        "message": "Recovered device state via SSH reboot",
+                        "recovered": True,
+                        "recovery_method": "ssh_reboot",
+                    }
+            except Exception:
+                pass
+            try:
+                if self.ssh_manager.check_connection(timeout_s=2.0):
+                    return {
+                        "success": True,
+                        "message": "Recovered device state via SSH reboot",
+                        "recovered": True,
+                        "recovery_method": "ssh_reboot",
+                    }
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        return {
+            "success": False,
+            "message": "Timed out waiting for device after SSH reboot",
+            "recovered": False,
+            "recovery_method": "none",
+        }
 
     def control(self, params: Dict[str, Any]) -> Dict[str, Any]:
         config: Dict[str, Any] = {}
