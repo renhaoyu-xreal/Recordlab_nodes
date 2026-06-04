@@ -17,7 +17,7 @@
         "imu_simulation_record_demo.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 30},
+        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
         {"name": "record_timer", "port": 16520, "encoding": "json", "ui_max_hz": 10},
         {"name": "time_delay", "port": 16521, "encoding": "json", "ui_max_hz": 10},
         {"name": "motion_status", "port": 16525, "encoding": "json", "ui_max_hz": 5}
@@ -44,7 +44,7 @@
         "record_bsp_rgb_raw.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 30},
+        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
         {
           "name": "camera_data",
           "port": 16515,
@@ -69,7 +69,56 @@
         "ssh_username": "root",
         "ssh_password": "xreal2017"
       }
+    },
+    "glasses_nviz_node": {
+      "name": "glasses_nviz_node",
+      "node_class": "recordlab_nodes.nodes.nviz.nviz_node.NvizNode",
+      "process_type": "python_node",
+      "subnode_host": "127.0.0.1",
+      "action_name": "glasses_nviz_actions",
+      "goal_port": 5692,
+      "feedback_port": 5693,
+      "root_path": "data",
+      "init_device_params": {
+        "enable_udp": false,
+        "enable_tcp": true
+      },
+      "init_device_pause_duration": 20.0,
+      "default_scripts": [
+        "scripts/record_ur_gt_3dof.py",
+        "scripts/record_ur_gt_3dof_batch.py",
+        "scripts/test_nviz_node.py"
+      ],
+      "topics": [
+        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
+        {"name": "record_timer", "port": 16520, "encoding": "json", "ui_max_hz": 10},
+        {"name": "time_delay", "port": 16521, "encoding": "json", "ui_max_hz": 10},
+        {"name": "motion_status", "port": 16525, "encoding": "json", "ui_max_hz": 5}
+      ],
+      "custom_params": {
+        "enable_udp": false,
+        "enable_tcp": true,
+        "ssh_host": "169.254.2.1",
+        "ssh_port": 22,
+        "ssh_username": "root",
+        "ssh_password": "xreal2017"
+      }
+    },
+    "UR_node": {
+      "name": "UR_node",
+      "subnode_host": "192.168.10.213",
+      "action_name": "UR_node_actions",
+      "goal_port": 5557,
+      "feedback_port": 5558,
+      "custom_params": {
+        "remote_user": "xreal",
+        "remote_password": "Xreal0125"
+      }
+    },
+    "localhost": {
+      "name": "localhost",
+      "scripts_dir": "scripts"
     }
   },
-  "primary_agents": ["imu_simulation", "glasses_bsp_node"]
+  "primary_agents": ["imu_simulation", "glasses_bsp_node", "glasses_nviz_node"]
 }
