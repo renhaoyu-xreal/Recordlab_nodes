@@ -1,6 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from recordlab_nodes.core.node_runtime import validate_agent_config
+
 
 def test_agents_config_uses_node_class_without_command_list():
     config_path = Path(__file__).resolve().parents[1] / "config" / "agents_config.json"
@@ -9,7 +13,9 @@ def test_agents_config_uses_node_class_without_command_list():
 
     assert agent["node_class"].endswith(".ImuSimNode")
     assert "commands" not in agent
-    assert {"goal_port", "feedback_port", "topics"} <= set(agent)
+    assert {"goal_port", "feedback_port", "data_port", "topics"} <= set(agent)
+    for topic in agent["topics"]:
+        assert "port" not in topic
 
 
 def test_agents_config_contains_bsp_agent_and_scripts():
@@ -34,3 +40,17 @@ def test_agents_config_contains_bsp_agent_and_scripts():
         assert (nodes_root / "node_scripts" / script).exists()
     camera_topic = next(item for item in agent["topics"] if item["name"] == "camera_data")
     assert camera_topic["encoding"] == "json_binary"
+    for topic in agent["topics"]:
+        assert "port" not in topic
+
+
+def test_node_runtime_rejects_old_topic_port_config():
+    with pytest.raises(KeyError):
+        validate_agent_config({"name": "bad", "topics": []})
+
+    with pytest.raises(ValueError):
+        validate_agent_config({
+            "name": "bad",
+            "data_port": 16510,
+            "topics": [{"name": "imu_data", "port": 16510, "encoding": "json"}],
+        })

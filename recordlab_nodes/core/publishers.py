@@ -1,39 +1,55 @@
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import zmq
 
 from recordlab_nodes.common.paths import ensure_echo_python_on_path
 
 ensure_echo_python_on_path()
-from message_system import Publisher  # noqa: E402
+from message_system import Message  # noqa: E402
+
+
+class SharedTopicPublisher:
+    def __init__(self, node_name: str, port: int):
+        self.node_name = node_name
+        self.port = int(port)
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.PUB)
+        self.socket.setsockopt(zmq.SNDHWM, 1000)
+        self.socket.setsockopt(zmq.SNDTIMEO, 1000)
+        self.socket.setsockopt(zmq.LINGER, 0)
+        self.socket.bind(f"tcp://*:{self.port}")
+
+    def publish(self, topic_name: str, data: Dict[str, Any], encoding: str) -> None:
+        payload = Message(data=data, encoding=encoding).serialize()
+        self.socket.send_multipart([topic_name.encode("utf-8"), payload])
+
+    def close(self) -> None:
+        self.socket.close()
+        self.context.term()
 
 
 class PublisherManager:
-    def __init__(self, node_name: str, topic_configs):
+    def __init__(self, node_name: str, data_port: int, topic_configs):
         self.node_name = node_name
+        self.data_port = int(data_port)
         self.topic_configs = {item["name"]: item for item in topic_configs}
-        self.publishers: Dict[str, Publisher] = {}
+        self.publisher: Optional[SharedTopicPublisher] = None
 
     def start(self) -> None:
-        for topic_name, cfg in self.topic_configs.items():
-            pub = Publisher(
-                name=f"{self.node_name}/{topic_name}",
-                topic=topic_name,
-                port=int(cfg["port"]),
-                encoding=cfg.get("encoding", "json"),
-            )
-            pub.start()
-            self.publishers[topic_name] = pub
-        if self.publishers:
+        if self.topic_configs:
+            self.publisher = SharedTopicPublisher(self.node_name, self.data_port)
             time.sleep(0.2)
 
     def publish(self, topic_name: str, data: Dict[str, Any]) -> None:
-        if topic_name not in self.publishers:
+        if topic_name not in self.topic_configs:
             raise KeyError(f"Topic not configured: {topic_name}")
-        self.publishers[topic_name].publish(data)
+        if self.publisher is None:
+            raise RuntimeError("PublisherManager has not been started")
+        encoding = self.topic_configs[topic_name].get("encoding", "json")
+        self.publisher.publish(topic_name, data, encoding)
 
     def close(self) -> None:
-        for pub in self.publishers.values():
-            close = getattr(pub, "close", None)
-            if close:
-                close()
-        self.publishers.clear()
+        if self.publisher is not None:
+            self.publisher.close()
+            self.publisher = None

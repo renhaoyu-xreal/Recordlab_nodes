@@ -8,6 +8,7 @@
       "action_name": "imu_simulation_actions",
       "goal_port": 5690,
       "feedback_port": 5691,
+      "data_port": 16510,
       "root_path": "data",
       "init_device_params": {
         "read_path": "data/samples/imu_0.csv"
@@ -17,10 +18,10 @@
         "imu_simulation_record_demo.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json"},
-        {"name": "record_timer", "port": 16520, "encoding": "json"},
-        {"name": "time_delay", "port": 16521, "encoding": "json"},
-        {"name": "motion_status", "port": 16525, "encoding": "json"}
+        {"name": "imu_data", "encoding": "json"},
+        {"name": "record_timer", "encoding": "json"},
+        {"name": "time_delay", "encoding": "json"},
+        {"name": "motion_status", "encoding": "json"}
       ],
       "custom_params": {}
     },
@@ -32,6 +33,7 @@
       "action_name": "glasses_bsp_actions",
       "goal_port": 5700,
       "feedback_port": 5701,
+      "data_port": 16530,
       "root_path": "data",
       "init_device_params": {},
       "init_device_pause_duration": 0.5,
@@ -44,11 +46,11 @@
         "record_bsp_rgb_raw.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json"},
-        {"name": "camera_data", "port": 16515, "encoding": "json_binary"},
-        {"name": "record_timer", "port": 16520, "encoding": "json"},
-        {"name": "time_delay", "port": 16521, "encoding": "json"},
-        {"name": "motion_status", "port": 16525, "encoding": "json"}
+        {"name": "imu_data", "encoding": "json"},
+        {"name": "camera_data", "encoding": "json_binary"},
+        {"name": "record_timer", "encoding": "json"},
+        {"name": "time_delay", "encoding": "json"},
+        {"name": "motion_status", "encoding": "json"}
       ],
       "custom_params": {
         "ssh_host": "169.254.2.1",
