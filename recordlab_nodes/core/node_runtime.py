@@ -24,7 +24,20 @@ def load_agent_config(config_path: str, agent_name: str) -> Dict[str, Any]:
     except KeyError as exc:
         raise KeyError(f"Agent not found in config: {agent_name}") from exc
     config_base = config_file.parent.parent if config_file.parent.name == "config" else config_file.parent
-    return resolve_agent_paths(item, config_base)
+    agent_config = resolve_agent_paths(item, config_base)
+    validate_agent_config(agent_config)
+    return agent_config
+
+
+def validate_agent_config(agent_config: Dict[str, Any]) -> None:
+    if "data_port" not in agent_config:
+        raise KeyError(f"Agent missing data_port: {agent_config.get('name', '<unknown>')}")
+    for topic in agent_config.get("topics", []):
+        if "port" in topic:
+            raise ValueError(
+                "topics[].port is no longer supported; use agent data_port instead: "
+                f"{agent_config.get('name', '<unknown>')}/{topic.get('name', '<unknown>')}"
+            )
 
 
 def import_node_class(path: str):
@@ -50,6 +63,7 @@ class NodeRuntime:
         self.node = self.node_class(agent_config)
         self.publisher_manager = PublisherManager(
             node_name=agent_config["name"],
+            data_port=int(agent_config["data_port"]),
             topic_configs=agent_config.get("topics", []),
         )
         self.node.bind_runtime(self)

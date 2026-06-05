@@ -8,6 +8,7 @@
       "action_name": "imu_simulation_actions",
       "goal_port": 5690,
       "feedback_port": 5691,
+      "data_port": 16510,
       "root_path": "data",
       "init_device_params": {
         "read_path": "data/samples/imu_0.csv"
@@ -17,10 +18,10 @@
         "imu_simulation_record_demo.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
-        {"name": "record_timer", "port": 16520, "encoding": "json", "ui_max_hz": 10},
-        {"name": "time_delay", "port": 16521, "encoding": "json", "ui_max_hz": 10},
-        {"name": "motion_status", "port": 16525, "encoding": "json", "ui_max_hz": 5}
+        {"name": "imu_data", "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
+        {"name": "record_timer", "encoding": "json", "ui_max_hz": 10},
+        {"name": "time_delay", "encoding": "json", "ui_max_hz": 10},
+        {"name": "motion_status", "encoding": "json", "ui_max_hz": 5}
       ],
       "custom_params": {}
     },
@@ -32,6 +33,7 @@
       "action_name": "glasses_bsp_actions",
       "goal_port": 5700,
       "feedback_port": 5701,
+      "data_port": 16530,
       "root_path": "data",
       "init_device_params": {},
       "init_device_pause_duration": 0.5,
@@ -44,10 +46,9 @@
         "record_bsp_rgb_raw.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
+        {"name": "imu_data", "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
         {
           "name": "camera_data",
-          "port": 16515,
           "encoding": "json_binary",
           "ui_max_hz": 30,
           "qos": {
@@ -59,9 +60,9 @@
             "debug_stats": true
           }
         },
-        {"name": "record_timer", "port": 16520, "encoding": "json", "ui_max_hz": 10},
-        {"name": "time_delay", "port": 16521, "encoding": "json", "ui_max_hz": 10},
-        {"name": "motion_status", "port": 16525, "encoding": "json", "ui_max_hz": 5}
+        {"name": "record_timer", "encoding": "json", "ui_max_hz": 10},
+        {"name": "time_delay", "encoding": "json", "ui_max_hz": 10},
+        {"name": "motion_status", "encoding": "json", "ui_max_hz": 5}
       ],
       "custom_params": {
         "ssh_host": "169.254.2.1",
@@ -78,6 +79,7 @@
       "action_name": "glasses_nviz_actions",
       "goal_port": 5692,
       "feedback_port": 5693,
+      "data_port": 16540,
       "root_path": "data",
       "init_device_params": {
         "enable_udp": false,
@@ -90,10 +92,10 @@
         "scripts/test_nviz_node.py"
       ],
       "topics": [
-        {"name": "imu_data", "port": 16510, "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
-        {"name": "record_timer", "port": 16520, "encoding": "json", "ui_max_hz": 10},
-        {"name": "time_delay", "port": 16521, "encoding": "json", "ui_max_hz": 10},
-        {"name": "motion_status", "port": 16525, "encoding": "json", "ui_max_hz": 5}
+        {"name": "imu_data", "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
+        {"name": "record_timer", "encoding": "json", "ui_max_hz": 10},
+        {"name": "time_delay", "encoding": "json", "ui_max_hz": 10},
+        {"name": "motion_status", "encoding": "json", "ui_max_hz": 5}
       ],
       "custom_params": {
         "enable_udp": false,

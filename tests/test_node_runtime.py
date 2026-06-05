@@ -52,10 +52,7 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
     make_csv(csv_path)
     goal_port = free_port()
     feedback_port = free_port()
-    imu_port = free_port()
-    record_port = free_port()
-    delay_port = free_port()
-    motion_port = free_port()
+    data_port = free_port()
     config_path = tmp_path / "agents_config.json"
     root_path = tmp_path / "data"
     config_path.write_text(json.dumps({
@@ -68,12 +65,13 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
                 "action_name": "imu_test_actions",
                 "goal_port": goal_port,
                 "feedback_port": feedback_port,
+                "data_port": data_port,
                 "root_path": str(root_path),
                 "topics": [
-                    {"name": "imu_data", "port": imu_port, "encoding": "json"},
-                    {"name": "record_timer", "port": record_port, "encoding": "json"},
-                    {"name": "time_delay", "port": delay_port, "encoding": "json"},
-                    {"name": "motion_status", "port": motion_port, "encoding": "json"}
+                    {"name": "imu_data", "encoding": "json"},
+                    {"name": "record_timer", "encoding": "json"},
+                    {"name": "time_delay", "encoding": "json"},
+                    {"name": "motion_status", "encoding": "json"}
                 ],
                 "custom_params": {}
             }
@@ -106,8 +104,32 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
         time.sleep(0.2)
 
         messages = []
-        sub = Subscriber("imu_test_sub", "imu_data", lambda topic, data: messages.append(data), port=imu_port)
+        record_timer_messages = []
+        time_delay_messages = []
+        motion_status_messages = []
+        sub = Subscriber("imu_test_sub", "imu_data", lambda topic, data: messages.append(data), port=data_port)
+        record_sub = Subscriber(
+            "imu_test_record_sub",
+            "record_timer",
+            lambda topic, data: record_timer_messages.append(data),
+            port=data_port,
+        )
+        delay_sub = Subscriber(
+            "imu_test_delay_sub",
+            "time_delay",
+            lambda topic, data: time_delay_messages.append(data),
+            port=data_port,
+        )
+        motion_sub = Subscriber(
+            "imu_test_motion_sub",
+            "motion_status",
+            lambda topic, data: motion_status_messages.append(data),
+            port=data_port,
+        )
         sub.start()
+        record_sub.start()
+        delay_sub.start()
+        motion_sub.start()
 
         result, status = send_and_wait(client, {"cmd": "init_device", "params": {"read_path": str(csv_path)}})
         assert status == GoalStatus.SUCCEEDED
@@ -135,9 +157,15 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
         assert result["success"]
 
         deadline = time.time() + 4
-        while time.time() < deadline and len(messages) < 3:
+        while (
+            time.time() < deadline
+            and (len(messages) < 3 or not record_timer_messages or not time_delay_messages or not motion_status_messages)
+        ):
             time.sleep(0.05)
         assert messages, "Expected at least one IMU topic message"
+        assert record_timer_messages, "Expected record_timer on shared data_port"
+        assert time_delay_messages, "Expected time_delay on shared data_port"
+        assert motion_status_messages, "Expected motion_status on shared data_port"
 
         result, status = send_and_wait(client, {"cmd": "stop_device", "params": {}})
         assert status == GoalStatus.SUCCEEDED
@@ -148,6 +176,9 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
         rows = list(csv.DictReader(output.open(encoding="utf-8")))
         assert rows
         sub.close()
+        record_sub.close()
+        delay_sub.close()
+        motion_sub.close()
         client.close()
     finally:
         proc.terminate()
@@ -176,12 +207,13 @@ def test_two_node_runtimes_are_isolated(tmp_path):
             "action_name": f"{name}_actions",
             "goal_port": free_port(),
             "feedback_port": free_port(),
+            "data_port": free_port(),
             "root_path": str(tmp_path / f"data_{name}"),
             "topics": [
-                {"name": "imu_data", "port": free_port(), "encoding": "json"},
-                {"name": "record_timer", "port": free_port(), "encoding": "json"},
-                {"name": "time_delay", "port": free_port(), "encoding": "json"},
-                {"name": "motion_status", "port": free_port(), "encoding": "json"}
+                {"name": "imu_data", "encoding": "json"},
+                {"name": "record_timer", "encoding": "json"},
+                {"name": "time_delay", "encoding": "json"},
+                {"name": "motion_status", "encoding": "json"}
             ],
             "custom_params": {}
         }
