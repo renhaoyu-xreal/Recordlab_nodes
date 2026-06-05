@@ -97,7 +97,7 @@ mkdir -p "${PACKAGE_DIR}/build" "${DIST_ROOT}"
 
 copy_executable "recordlabc"
 copy_executable "bsp_main_subnode"
-copy_executable "helen_main_subnode"
+copy_executable "mcu_main_subnode"
 copy_executable "imu_sim_main_subnode"
 copy_executable "nviz_node_subnode"
 copy_executable "recordlabc_doctor"

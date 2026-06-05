@@ -95,7 +95,7 @@ class XRLinkDevice:
                     capable.append(display_name)
                 else:
                     color = catalog.get("device_color") or ""
-                    reason = "红色/Helen MCU 设备不能使用 nviz" if color == "red" else "该型号未标记为 nviz SSH 设备"
+                    reason = "红色/MCU 设备不能使用 nviz" if color == "red" else "该型号未标记为 nviz SSH 设备"
                     blocked.append(f"{display_name}: {reason}")
             if capable:
                 return {
@@ -119,7 +119,7 @@ class XRLinkDevice:
             }
         return {
             "success": False,
-            "message": "未检测到可 nviz 的蓝色/SSH 眼镜；Helen/红色 MCU 设备不能 nviz，可使用 helen_node 或 BSP。",
+            "message": "未检测到可 nviz 的蓝色/SSH 眼镜；红色 MCU 设备不能 nviz，可使用 mcu_node 或 BSP。",
             "lsusb": lsusb_info,
         }
 

@@ -71,12 +71,12 @@
         "ssh_password": "xreal2017"
       }
     },
-    "helen_node": {
-      "name": "helen_node",
-      "node_class": "recordlab_nodes.nodes.helen.helen_main_node.HelenMainNode",
+    "mcu_node": {
+      "name": "mcu_node",
+      "node_class": "recordlab_nodes.nodes.mcu.mcu_main_node.McuMainNode",
       "process_type": "python_node",
       "subnode_host": "127.0.0.1",
-      "action_name": "helen_actions",
+      "action_name": "mcu_actions",
       "goal_port": 5696,
       "feedback_port": 5697,
       "data_port": 16536,
@@ -87,7 +87,7 @@
       },
       "init_device_pause_duration": 0.5,
       "default_scripts": [
-        "record_helen_id1088_ur_gt_3dof_batch.py"
+        "record_mcu_id1088_ur_gt_3dof_batch.py"
       ],
       "topics": [
         {"name": "imu_data", "encoding": "json", "parse_mode": "type_vector6_fast", "ui_max_hz": 60},
@@ -163,5 +163,5 @@
       "scripts_dir": "scripts"
     }
   },
-  "primary_agents": ["imu_simulation", "glasses_bsp_node", "helen_node", "glasses_nviz_node"]
+  "primary_agents": ["imu_simulation", "glasses_bsp_node", "mcu_node", "glasses_nviz_node"]
 }

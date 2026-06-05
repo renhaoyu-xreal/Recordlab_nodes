@@ -44,19 +44,19 @@ def test_agents_config_contains_bsp_agent_and_scripts():
         assert "port" not in topic
 
 
-def test_agents_config_contains_helen_agent_and_script():
+def test_agents_config_contains_mcu_agent_and_script():
     config_path = Path(__file__).resolve().parents[1] / "config" / "agents_config.json"
     nodes_root = config_path.parents[1]
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    agent = config["agents"]["helen_node"]
+    agent = config["agents"]["mcu_node"]
 
-    assert agent["node_class"].endswith(".HelenMainNode")
+    assert agent["node_class"].endswith(".McuMainNode")
     assert "commands" not in agent
-    assert "helen_node" in config["primary_agents"]
+    assert "mcu_node" in config["primary_agents"]
     assert agent["init_device_params"]["allow_ssh_reboot"] is False
     assert agent["custom_params"]["persist_ssh_artifacts"] is False
     scripts = set(agent["default_scripts"])
-    assert {"record_helen_id1088_ur_gt_3dof_batch.py"} <= scripts
+    assert {"record_mcu_id1088_ur_gt_3dof_batch.py"} <= scripts
     for script in scripts:
         assert (nodes_root / "scripts" / script).exists()
     assert {topic["name"] for topic in agent["topics"]} >= {

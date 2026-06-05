@@ -36,14 +36,14 @@ logger = get_logger(__name__)
 #   default_connection  "lsusb" | "ssh" — preferred check strategy.
 #   supports_bsp  Whether the device can be used by glasses_bsp_node.
 #   supports_nviz Whether the device can be used by glasses_nviz_node.
-#   device_color  "blue" for SSH-capable nviz glasses, "red" for Helen-like MCU,
+#   device_color  "blue" for SSH-capable nviz glasses, "red" for MCU,
 #                 "unknown" for ordinary models without a confirmed nviz path.
 #   ssh_preferred  Deprecated alias for default_connection="ssh".
 _USB_PRODUCT_CATALOG: List[Dict[str, Any]] = [
     {"vid": "0x3318", "pid": "0x0420", "names": ["Air", "P55", "Flora"],
      "display_name": "Air/P55/Flora", "agent_name": "glasses_bsp_node",
      "default_connection": "lsusb", "supports_bsp": True, "supports_nviz": False,
-     "device_color": "red", "device_group": "helen_like",
+     "device_color": "red", "device_group": "mcu_like",
      "remarks": ["Air: 7911ux=0x0001, vxr7200=0x0002"]},
     {"vid": "0x0000", "pid": "0x1012", "name": "Ada", "agent_name": "glasses_bsp_node",
      "default_connection": "lsusb", "supports_bsp": True, "supports_nviz": False,
@@ -78,9 +78,9 @@ _USB_PRODUCT_CATALOG: List[Dict[str, Any]] = [
      "supports_bsp": True, "supports_nviz": True, "device_color": "blue",
      "device_group": "ssh_nviz"},
     {"vid": "0x3318", "pid": "0x0440", "names": ["Helen", "Helen Pro"],
-     "display_name": "Helen/Helen Pro", "agent_name": "helen_node",
+     "display_name": "Helen/Helen Pro (MCU)", "agent_name": "mcu_node",
      "default_connection": "lsusb", "supports_bsp": True, "supports_nviz": False,
-     "device_color": "red", "device_group": "helen_like"},
+     "device_color": "red", "device_group": "mcu_like"},
 ]
 
 

@@ -3,10 +3,10 @@ from typing import Any, Dict
 from recordlab_nodes.nodes.bsp.bsp_main_node import BspMainNode
 
 
-class HelenMainNode(BspMainNode):
-    """MCU/Helen glasses node using the shared XREAL SDK capture pipeline.
+class McuMainNode(BspMainNode):
+    """MCU glasses node using the shared XREAL SDK capture pipeline.
 
-    Helen devices expose the same SDK IMU data path used by the BSP node, but
+    MCU devices expose the same SDK IMU data path used by the BSP node, but
     they are not SSH/nviz devices. Keep the business contract identical while
     disabling SSH-only recording artifacts by default.
     """

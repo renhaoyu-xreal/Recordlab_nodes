@@ -16,7 +16,7 @@ def test_usb_catalog_groups_match_recordlab_device_colors():
     for name in ("Air", "P55", "Flora", "Helen", "Helen Pro"):
         entry = catalog[name]
         assert entry["device_color"] == "red"
-        assert entry["device_group"] == "helen_like"
+        assert entry["device_group"] == "mcu_like"
         assert entry["supports_bsp"] is True
         assert entry["supports_nviz"] is False
 

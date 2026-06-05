@@ -280,7 +280,7 @@ class AgentWrapper:
 
     def stop_for_shutdown(self) -> None:
         try:
-            if self._name in {"glasses_bsp_node", "glasses_nviz_node", "helen_node"}:
+            if self._name in {"glasses_bsp_node", "glasses_nviz_node", "mcu_node"}:
                 self.cmd("stop_record", {}, timeout=8.0)
                 self.cmd("stop_device", {}, timeout=8.0)
             if self._name == "localhost":
@@ -828,7 +828,7 @@ def main() -> int:
                 workflow.set_step("stop_record", "running", "用户停止执行，正在停止录制")
         except Exception:
             pass
-        for key in ("glasses_bsp_node", "glasses_nviz_node", "helen_node", "localhost"):
+        for key in ("glasses_bsp_node", "glasses_nviz_node", "mcu_node", "localhost"):
             wrapper = agent_defs.get(key)
             if wrapper:
                 wrapper.stop_for_shutdown()

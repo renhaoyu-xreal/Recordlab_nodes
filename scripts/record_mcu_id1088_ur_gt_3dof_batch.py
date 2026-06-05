@@ -15,10 +15,10 @@ from scripts.common.record_path_helper import build_bsp_dataset_name, prompt_bsp
 from scripts.common.record_path_helper import resolve_bsp_glasses_id, resolve_record_glasses_fsn
 
 
-HELEN_AGENT_NAME = "helen_node"
+MCU_AGENT_NAME = "mcu_node"
 LEGACY_BSP_AGENT_NAME = "glasses_bsp_node"
 
-all_agent_names = ["helen_node", "UR_node", "localhost"]
+all_agent_names = ["mcu_node", "UR_node", "localhost"]
 
 print("[bsp_batch_recording] Starting BSP batch recording script...")
 print(f"[bsp_batch_recording] Available agents: {all_agent_names}")
@@ -151,7 +151,7 @@ try:
             success_count = 0
             failed_count = 0
 
-            glasses_agent = script_agents.get(HELEN_AGENT_NAME) or script_agents.get(LEGACY_BSP_AGENT_NAME)
+            glasses_agent = script_agents.get(MCU_AGENT_NAME) or script_agents.get(LEGACY_BSP_AGENT_NAME)
             ur_agent = script_agents.get("ur_node")
             localhost_agent = script_agents.get("localhost")
             device_ready_from_bootstrap = (
@@ -182,7 +182,7 @@ try:
                 set_step(WorkflowStep.NODES_CHECK, "running", "Checking node connections")
                 missing_agents = []
                 if glasses_agent is None:
-                    missing_agents.append(HELEN_AGENT_NAME)
+                    missing_agents.append(MCU_AGENT_NAME)
                 if ur_agent is None:
                     missing_agents.append("UR_node")
                 if enable_video and localhost_agent is None:
@@ -190,7 +190,7 @@ try:
 
                 if missing_agents:
                     agent_target_info = {
-                        HELEN_AGENT_NAME: "IP=localhost, goal_port=5696, feedback_port=5697",
+                        MCU_AGENT_NAME: "IP=localhost, goal_port=5696, feedback_port=5697",
                         "UR_node": "IP=192.168.10.213, goal_port=5557, feedback_port=5558",
                         "localhost": "IP=localhost, no ports",
                     }
@@ -266,7 +266,7 @@ try:
 
                     glasses_id = resolve_bsp_glasses_id(
                         glasses_agent,
-                        agent_names=(HELEN_AGENT_NAME, LEGACY_BSP_AGENT_NAME),
+                        agent_names=(MCU_AGENT_NAME, LEGACY_BSP_AGENT_NAME),
                     )
                     glasses_fsn = resolve_record_glasses_fsn(
                         agent=glasses_agent,
@@ -280,7 +280,7 @@ try:
                         glasses_id_override=glasses_id,
                         glasses_fsn_override=glasses_fsn,
                         agent=glasses_agent,
-                        agent_names=(HELEN_AGENT_NAME, LEGACY_BSP_AGENT_NAME),
+                        agent_names=(MCU_AGENT_NAME, LEGACY_BSP_AGENT_NAME),
                     )
 
                     date_string, file_name, _ = build_record_dataset_name(
