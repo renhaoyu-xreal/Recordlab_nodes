@@ -75,10 +75,16 @@ class BspMainNode(MainNode):
         self.camera_shm_writer.close(unlink=True)
 
     def init_device(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return self.device.initialize(params or {})
+        result = self.device.initialize(params or {})
+        if result.get("success"):
+            self._publish_device_cookies()
+        return result
 
     def start_device(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return self.device.start(params or {})
+        result = self.device.start(params or {})
+        if result.get("success"):
+            self._publish_device_cookies()
+        return result
 
     def stop_device(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if self.recording:
@@ -204,6 +210,15 @@ class BspMainNode(MainNode):
 
     def _should_publish(self, now_ns: int, last_ns: int, interval_ns: int) -> bool:
         return last_ns <= 0 or now_ns - last_ns >= interval_ns
+
+    def _publish_device_cookies(self) -> None:
+        device_state = self.device.get_runtime_state().get("device", {})
+        fsn = device_state.get("fsn")
+        if fsn:
+            self.publish_cookie("FSN", fsn, True)
+        firmware = device_state.get("mcu_firmware_version")
+        if firmware:
+            self.publish_cookie("mcu_firmware_version", firmware, True)
 
     def _on_imu(self, imu_msg: Dict[str, Any]) -> None:
         self.publish(TOPIC_IMU, imu_msg)

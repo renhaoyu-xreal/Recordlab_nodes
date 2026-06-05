@@ -121,10 +121,11 @@ class DialogAPI:
 
 
 class AgentWrapper:
-    def __init__(self, name: str, config: dict[str, Any], root: Path):
+    def __init__(self, name: str, config: dict[str, Any], root: Path, channel: EventChannel | None = None):
         self._name = name
         self._config = config
         self._root = root
+        self._channel = channel
         self._pending: dict[str, tuple[subprocess.Popen[str], Path]] = {}
         self._remote_action_client = None
         self._remote_results: dict[str, dict[str, Any]] = {}
@@ -295,6 +296,8 @@ class AgentWrapper:
         wait_for_result: bool,
         timeout: float,
     ) -> dict[str, Any]:
+        if self._uses_host_bridge():
+            return self._run_host_bridge_cmd(cmd_name, params, wait_for_result, timeout)
         if self._uses_remote_action_client():
             return self._run_remote_agent_cmd(cmd_name, params, wait_for_result, timeout)
 
@@ -352,6 +355,38 @@ class AgentWrapper:
 
     def _uses_remote_action_client(self) -> bool:
         return "goal_port" in self._config and "feedback_port" in self._config
+
+    def _uses_host_bridge(self) -> bool:
+        return self._channel is not None and os.environ.get("RECORDLAB_USE_HOST_BRIDGE", "0") == "1"
+
+    def _run_host_bridge_cmd(
+        self,
+        cmd_name: str,
+        params: dict[str, Any],
+        wait_for_result: bool,
+        timeout: float,
+    ) -> dict[str, Any]:
+        request_id = uuid.uuid4().hex
+        assert self._channel is not None
+        response = self._channel.request(
+            {
+                "type": "cmd_request",
+                "id": request_id,
+                "request_id": request_id,
+                "agent_name": self._name,
+                "cmd": cmd_name,
+                "params": params,
+                "wait_for_result": wait_for_result,
+                "timeout_s": timeout,
+            }
+        )
+        payload = response.get("response") if isinstance(response, dict) else None
+        if isinstance(payload, dict):
+            return payload
+        return {
+            "success": bool(response.get("success")) if isinstance(response, dict) else False,
+            "message": response.get("message", "Host bridge command failed") if isinstance(response, dict) else "Host bridge command failed",
+        }
 
     def _ensure_remote_action_client(self, server_timeout_s: float = DEFAULT_AGENT_TIMEOUT_S):
         if self._remote_action_client is not None:
@@ -692,12 +727,12 @@ def _state_value(root: Path, state_key: str, timeout: float = 1.0):
             pass
 
 
-def _load_agent_definitions(config_path: Path, root: Path) -> dict[str, AgentWrapper]:
+def _load_agent_definitions(config_path: Path, root: Path, channel: EventChannel | None = None) -> dict[str, AgentWrapper]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     raw_agents = config.get("agents") or {}
     wrappers: dict[str, AgentWrapper] = {}
     for name, agent_config in raw_agents.items():
-        wrapper = AgentWrapper(name, agent_config if isinstance(agent_config, dict) else {}, root)
+        wrapper = AgentWrapper(name, agent_config if isinstance(agent_config, dict) else {}, root, channel)
         wrappers[name] = wrapper
     return wrappers
 
@@ -816,7 +851,7 @@ def main() -> int:
     config_path = Path(args.config).resolve()
     script_path = Path(args.script).resolve()
     channel = EventChannel()
-    agent_defs = _load_agent_definitions(config_path, root)
+    agent_defs = _load_agent_definitions(config_path, root, channel)
     required_agent_names = _extract_required_agent_names(script_path)
     agents, unavailable_agents = _prepare_script_agents(
         agent_defs, required_agent_names, root, script_path)

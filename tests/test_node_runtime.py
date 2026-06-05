@@ -56,6 +56,16 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
     config_path = tmp_path / "agents_config.json"
     root_path = tmp_path / "data"
     config_path.write_text(json.dumps({
+        "shared": {
+            "topic_sets": {
+                "standard_sensor_topics": [
+                    {"name": "imu_data", "encoding": "json"},
+                    {"name": "record_timer", "encoding": "json"},
+                    {"name": "time_delay", "encoding": "json"},
+                    {"name": "motion_status", "encoding": "json"}
+                ]
+            }
+        },
         "agents": {
             "imu_test": {
                 "name": "imu_test",
@@ -67,12 +77,7 @@ def test_node_runtime_imu_action_topic_and_recording(tmp_path):
                 "feedback_port": feedback_port,
                 "data_port": data_port,
                 "root_path": str(root_path),
-                "topics": [
-                    {"name": "imu_data", "encoding": "json"},
-                    {"name": "record_timer", "encoding": "json"},
-                    {"name": "time_delay", "encoding": "json"},
-                    {"name": "motion_status", "encoding": "json"}
-                ],
+                "topics": "standard_sensor_topics",
                 "custom_params": {}
             }
         },
@@ -209,16 +214,24 @@ def test_two_node_runtimes_are_isolated(tmp_path):
             "feedback_port": free_port(),
             "data_port": free_port(),
             "root_path": str(tmp_path / f"data_{name}"),
-            "topics": [
-                {"name": "imu_data", "encoding": "json"},
-                {"name": "record_timer", "encoding": "json"},
-                {"name": "time_delay", "encoding": "json"},
-                {"name": "motion_status", "encoding": "json"}
-            ],
+            "topics": "standard_sensor_topics",
             "custom_params": {}
         }
     config_path = tmp_path / "agents_config.json"
-    config_path.write_text(json.dumps({"agents": agents, "primary_agents": ["imu_a", "imu_b"]}), encoding="utf-8")
+    config_path.write_text(json.dumps({
+        "shared": {
+            "topic_sets": {
+                "standard_sensor_topics": [
+                    {"name": "imu_data", "encoding": "json"},
+                    {"name": "record_timer", "encoding": "json"},
+                    {"name": "time_delay", "encoding": "json"},
+                    {"name": "motion_status", "encoding": "json"}
+                ]
+            }
+        },
+        "agents": agents,
+        "primary_agents": ["imu_a", "imu_b"],
+    }), encoding="utf-8")
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{ROOT}:{ECHO_PYTHON}:{env.get('PYTHONPATH', '')}"
     procs = []

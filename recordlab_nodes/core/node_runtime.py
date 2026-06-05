@@ -15,6 +15,41 @@ from message_system import ActionServer, GoalStatus  # noqa: E402
 from .publishers import PublisherManager
 
 
+def resolve_shared_value(config: Dict[str, Any], item: Dict[str, Any], field: str, shared_group: str, default: Any) -> Any:
+    if field not in item:
+        return default
+    value = item[field]
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must reference shared.{shared_group} by name")
+    try:
+        return config["shared"][shared_group][value]
+    except KeyError as exc:
+        raise KeyError(f"Shared config key not found for {field}: {value}") from exc
+
+
+def expand_agent_config(config: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    agent_config = dict(item)
+    agent_config["exposed_commands"] = resolve_shared_value(
+        config, item, "exposed_commands", "exposed_commands", []
+    )
+    agent_config["commands"] = resolve_shared_value(
+        config, item, "commands", "commands", {}
+    )
+    agent_config["sensor_layout"] = resolve_shared_value(
+        config, item, "sensor_layout", "sensor_layouts", {}
+    )
+    agent_config["ui_bindings"] = resolve_shared_value(
+        config, item, "ui_bindings", "ui_bindings", {}
+    )
+    agent_config["error_messages"] = resolve_shared_value(
+        config, item, "error_messages", "error_messages", {}
+    )
+    agent_config["topics"] = resolve_shared_value(
+        config, item, "topics", "topic_sets", []
+    )
+    return agent_config
+
+
 def load_agent_config(config_path: str, agent_name: str) -> Dict[str, Any]:
     config_file = Path(config_path).expanduser().resolve()
     with open(config_file, "r", encoding="utf-8") as fh:
@@ -23,6 +58,7 @@ def load_agent_config(config_path: str, agent_name: str) -> Dict[str, Any]:
         item = config["agents"][agent_name]
     except KeyError as exc:
         raise KeyError(f"Agent not found in config: {agent_name}") from exc
+    item = expand_agent_config(config, item)
     config_base = config_file.parent.parent if config_file.parent.name == "config" else config_file.parent
     agent_config = resolve_agent_paths(item, config_base)
     validate_agent_config(agent_config)

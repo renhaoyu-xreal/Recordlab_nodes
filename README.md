@@ -19,6 +19,12 @@ declares its transport and UI behavior there:
 - `parse_mode`: optional Host-side parse optimization, named by payload shape.
 - `ui_max_hz`: maximum UI notification rate; this does not affect recording.
 - `qos`: generic communication semantics passed through to `echo_message_system`.
+- `metadata`: optional Host behavior hints. `{"role":"host_cookie"}` marks a
+  topic as node-owned key/value metadata instead of sensor data.
+
+Repeated agent blocks should be defined once under `shared` and referenced by
+name from each agent. Supported shared groups are `exposed_commands`,
+`commands`, `sensor_layouts`, `ui_bindings`, `error_messages`, and `topic_sets`.
 
 Example QoS for a preview stream that should never block acquisition:
 
@@ -34,3 +40,10 @@ Example QoS for a preview stream that should never block acquisition:
 
 Nodes own the business decision for which topic uses which QoS. Echo only
 receives generic options and must not contain RecordLab-specific topic checks.
+
+## Node cookies
+
+Nodes can call `BaseNode.publish_cookie(key, value, is_display=True)` to publish
+metadata such as FSN or firmware version on `node_cookie`. Host keeps the full
+cookie table and displays only entries whose `isDisplay/is_display` flag is
+true.

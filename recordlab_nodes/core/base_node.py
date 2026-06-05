@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+from recordlab_nodes.common.topics import TOPIC_NODE_COOKIE
+
 
 class BaseNode(ABC):
     """Abstract base for business nodes.
@@ -21,6 +23,13 @@ class BaseNode(ABC):
         if self._runtime is None:
             raise RuntimeError("Node runtime is not bound")
         self._runtime.publish(topic_name, data)
+
+    def publish_cookie(self, key: str, value: Any, is_display: bool = False) -> None:
+        self.publish(TOPIC_NODE_COOKIE, {
+            "key": key,
+            "value": value,
+            "isDisplay": is_display,
+        })
 
     def get_agent_topics(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": True, "topics": self.agent_config.get("topics", [])}

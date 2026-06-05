@@ -3,6 +3,7 @@ TOPIC_IMU = "imu_data"
 TOPIC_RECORD_TIMER = "record_timer"
 TOPIC_TIME_DELAY = "time_delay"
 TOPIC_MOTION_STATUS = "motion_status"
+TOPIC_NODE_COOKIE = "node_cookie"
 
 PORT_IMU = 16510
 PORT_CAMERA = 16515

@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 import zmq
 
 from recordlab_nodes.common.paths import ensure_echo_python_on_path
+from recordlab_nodes.common.data_registry_client import DataRegistryClient
 
 ensure_echo_python_on_path()
 from message_system import Message  # noqa: E402
@@ -37,10 +38,12 @@ class PublisherManager:
         self.data_port = int(data_port)
         self.topic_configs = {item["name"]: item for item in topic_configs}
         self.publisher: Optional[SharedTopicPublisher] = None
+        self.registry_client = DataRegistryClient()
 
     def start(self) -> None:
         if self.topic_configs:
             self.publisher = SharedTopicPublisher(self.node_name, self.data_port, self.topic_configs.values())
+            self.registry_client.register_topics(self.node_name, self.data_port, self.topic_configs.values())
             time.sleep(0.2)
 
     def publish(self, topic_name: str, data: Dict[str, Any]) -> None:
@@ -53,5 +56,7 @@ class PublisherManager:
 
     def close(self) -> None:
         if self.publisher is not None:
+            for topic_name in self.topic_configs:
+                self.registry_client.unregister_data(topic_name, self.data_port, self.node_name)
             self.publisher.close()
             self.publisher = None
