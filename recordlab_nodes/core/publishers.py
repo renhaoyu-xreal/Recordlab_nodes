@@ -15,19 +15,10 @@ class SharedTopicPublisher:
         self.port = int(port)
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
-        send_hwm = 1000
-        send_timeout_ms = 1000
-        for cfg in topic_configs:
-            qos = cfg.get("qos", {}) or {}
-            depth = int(qos.get("depth", 0) or 0)
-            if depth > 0:
-                send_hwm = min(send_hwm, depth)
-            if qos.get("drop_when_busy", False):
-                send_timeout_ms = 0
-            elif "send_timeout_ms" in qos:
-                send_timeout_ms = min(send_timeout_ms, int(qos["send_timeout_ms"]))
-        self.socket.setsockopt(zmq.SNDHWM, send_hwm)
-        self.socket.setsockopt(zmq.SNDTIMEO, send_timeout_ms)
+        # Topic-level QoS cannot be applied to one shared PUB socket. Keep the
+        # socket neutral so a latest-only camera topic does not throttle IMU.
+        self.socket.setsockopt(zmq.SNDHWM, 10000)
+        self.socket.setsockopt(zmq.SNDTIMEO, 100)
         self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.bind(f"tcp://*:{self.port}")
 
