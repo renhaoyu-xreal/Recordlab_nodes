@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 CAMERA_MODE_SLAM = "slam"
 CAMERA_MODE_RGB = "rgb"
+CAMERA_MODE_NONE = "none"
 DEFAULT_SLAM_FPS = 30.0
 
 
@@ -325,9 +326,11 @@ class BspDevice:
             return {"success": False, "message": "Already started"}
         params = params or {}
         camera_mode = params.get("camera_mode", CAMERA_MODE_SLAM)
-        if camera_mode != CAMERA_MODE_SLAM:
+        if camera_mode not in {CAMERA_MODE_SLAM, CAMERA_MODE_NONE}:
             return {"success": False, "message": "BSP RGB mode is not migrated in this node"}
-        sensors = {Xr.SensorType.Imu, Xr.SensorType.Slam}
+        sensors = {Xr.SensorType.Imu}
+        if camera_mode == CAMERA_MODE_SLAM:
+            sensors.add(Xr.SensorType.Slam)
         if self.display_enabled:
             sensors.add(Xr.SensorType.Display)
         result = self.bridge.start_sensors(sensors)
@@ -337,7 +340,7 @@ class BspDevice:
         if not result.get("success"):
             self.bridge.stop_sensors(sensors)
             return result
-        self.camera_mode = CAMERA_MODE_SLAM
+        self.camera_mode = camera_mode
         self.start_sensors = sensors
         self.started = True
         self._refresh_state()

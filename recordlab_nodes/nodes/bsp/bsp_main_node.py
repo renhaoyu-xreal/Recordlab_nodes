@@ -30,6 +30,7 @@ class BspMainNode(MainNode):
     def __init__(self, agent_config: Dict[str, Any]):
         super().__init__(agent_config)
         custom = agent_config.get("custom_params", {}) or {}
+        self.persist_ssh_artifacts = bool(custom.get("persist_ssh_artifacts", True))
         ssh = XrGlassesSSHManager()
         ssh.hostname = custom.get("ssh_host", ssh.hostname)
         ssh.port = int(custom.get("ssh_port", ssh.port))
@@ -159,7 +160,7 @@ class BspMainNode(MainNode):
                 screen_worker.stop()
             if mic_worker:
                 mic_worker.stop()
-            if record_path:
+            if record_path and self.persist_ssh_artifacts:
                 self.ssh_manager.save_getprop(record_path)
                 self.ssh_manager.fetch_glass_config(record_path)
             return {"success": True, "message": "Recording stopped"}
