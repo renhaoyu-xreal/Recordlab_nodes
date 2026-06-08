@@ -15,11 +15,13 @@ def test_agents_config_uses_node_class_without_command_list():
     assert agent["node_class"].endswith(".ImuSimNode")
     assert "standard_device" in config["shared"]["exposed_commands"]
     assert "standard_sensor_workspace" in config["shared"]["sensor_layouts"]
+    assert "nebula_summary_workspace" in config["shared"]["sensor_layouts"]
     assert "standard_device_timeouts" in config["shared"]["commands"]
     assert "standard_recording_status" in config["shared"]["ui_bindings"]
     assert "standard_device_errors" in config["shared"]["error_messages"]
     assert "standard_sensor_topics" in config["shared"]["topic_sets"]
     assert "camera_sensor_topics" in config["shared"]["topic_sets"]
+    assert "nebula_summary_topics" in config["shared"]["topic_sets"]
     assert {"goal_port", "feedback_port", "data_port", "topics", "commands", "exposed_commands"} <= set(agent)
     assert agent["exposed_commands"] == "standard_device"
     assert agent["commands"] == "standard_device_timeouts"
@@ -130,6 +132,24 @@ def test_agents_config_contains_android_primary_agent_and_scripts():
         assert (nodes_root / script).exists()
     for topic in expanded["topics"]:
         assert "port" not in topic
+
+
+def test_agents_config_contains_nebula_primary_agent():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "agents_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    agent = config["agents"]["nebula_trial"]
+    expanded = load_agent_config(str(config_path), "nebula_trial")
+
+    assert agent["node_class"].endswith(".NebulaNode")
+    assert agent["topics"] == "nebula_summary_topics"
+    assert agent["sensor_layout"] == "nebula_summary_workspace"
+    assert "nebula_trial" in config["primary_agents"]
+    assert {topic["name"] for topic in expanded["topics"]} >= {
+        "record_timer",
+        "node_cookie",
+    }
+    assert expanded["sensor_layout"]["nebula_latest_csv"]["ui_widget"] == "summary_value"
+    assert all("port" not in topic for topic in expanded["topics"])
 
 
 def test_node_runtime_rejects_old_topic_port_config():

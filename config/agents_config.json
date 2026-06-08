@@ -156,6 +156,13 @@
           "display_name": "record_timer",
           "ui_widget": "value"
         }
+      },
+      "nebula_summary_workspace": {
+        "nebula_latest_csv": {
+          "display_name": "Nebula 最新数据",
+          "ui_widget": "summary_value",
+          "poll_interval_ms": 1000
+        }
       }
     },
     "commands": {
@@ -290,6 +297,21 @@
           "parse_mode": "type_vector6_fast",
           "ui_max_hz": 60
         },
+        {
+          "name": "record_timer",
+          "encoding": "json",
+          "ui_max_hz": 10
+        },
+        {
+          "name": "node_cookie",
+          "encoding": "json",
+          "ui_max_hz": 5,
+          "metadata": {
+            "role": "host_cookie"
+          }
+        }
+      ],
+      "nebula_summary_topics": [
         {
           "name": "record_timer",
           "encoding": "json",
@@ -455,6 +477,34 @@
         "tcp_port": 8100
       }
     },
+    "nebula_trial": {
+      "name": "nebula_trial",
+      "node_class": "recordlab_nodes.nodes.nebula.nebula_node.NebulaNode",
+      "process_type": "python_node",
+      "subnode_host": "127.0.0.1",
+      "action_name": "nebula_trial_actions",
+      "goal_port": 5702,
+      "feedback_port": 5703,
+      "data_port": 16560,
+      "root_path": "data",
+      "init_device_params": {
+        "enable_wifi_adb": true,
+        "require_ping": true,
+        "adb_port": 5555,
+        "remote_dir": "/sdcard/3dof_data"
+      },
+      "init_device_pause_duration": 1.0,
+      "default_scripts": [],
+      "exposed_commands": "standard_device",
+      "commands": "standard_device_timeouts",
+      "sensor_layout": "nebula_summary_workspace",
+      "ui_bindings": "standard_recording_status",
+      "error_messages": "standard_device_errors",
+      "topics": "nebula_summary_topics",
+      "custom_params": {
+        "remote_dir": "/sdcard/3dof_data"
+      }
+    },
     "UR_node": {
       "name": "UR_node",
       "subnode_host": "192.168.10.213",
@@ -476,6 +526,7 @@
     "glasses_bsp_node",
     "mcu_node",
     "glasses_nviz_node",
-    "android"
+    "android",
+    "nebula_trial"
   ]
 }
