@@ -26,6 +26,47 @@ def notify_progress(progress_callback, event, status, message):
     except Exception as e:
         print(f"[nviz_ur_base] Warning: progress_callback failed: {e}")
 
+
+def get_script_agent(script_agents, agent_name):
+    if not script_agents:
+        return None
+    return script_agents.get(agent_name) or script_agents.get(str(agent_name).lower())
+
+
+def check_required_script_agents(script_agents, agent_names, timeout=2.0):
+    """脚本流程的节点准备检查：只通过 Host bridge 发送 check 命令。"""
+    def concise_reason(result):
+        message = str(result.get("message") or result)
+        if "Host bridge command timeout" in message:
+            return "连接超时/无响应"
+        if "当前没有可用 Agent client" in message:
+            return "节点未连接"
+        return message
+
+    errors = []
+    checked_agents = {}
+    for agent_name in agent_names:
+        agent = get_script_agent(script_agents, agent_name)
+        if agent is None:
+            reason = (globals().get("unavailable_script_agents") or {}).get(agent_name)
+            errors.append(f"- {agent_name}: {reason or '未在 agents_config.json 中定义或未注入'}")
+            continue
+        canonical_name = getattr(agent, "name", agent_name)
+        if canonical_name in checked_agents:
+            continue
+        checked_agents[canonical_name] = agent
+        try:
+            result = agent.cmd("check", {}, timeout=timeout)
+        except Exception as exc:
+            errors.append(f"- {agent_name}: check 异常: {exc}")
+            continue
+        if not result.get("success"):
+            errors.append(f"- {agent_name}: {concise_reason(result)}")
+
+    if errors:
+        return False, "当前脚本缺失以下 node:\n" + "\n".join(errors)
+    return True, "所有节点已连接"
+
 def get_date_string():
     """获取当天日期字符串，格式: 20260109
     

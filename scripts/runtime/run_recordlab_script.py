@@ -8,6 +8,7 @@ import ast
 import builtins
 import json
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -33,7 +34,25 @@ class EventChannel:
     def request(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = payload.setdefault("id", uuid.uuid4().hex)
         self.emit(payload)
+        deadline = None
+        if payload.get("type") == "cmd_request":
+            timeout_s = float(payload.get("timeout_s") or DEFAULT_AGENT_TIMEOUT_S)
+            deadline = time.monotonic() + max(1.0, timeout_s) + 0.5
+        elif payload.get("timeout_ms"):
+            deadline = time.monotonic() + max(0.1, float(payload.get("timeout_ms")) / 1000.0)
         while True:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return {
+                        "id": request_id,
+                        "success": False,
+                        "cancelled": False,
+                        "message": "Host bridge command timeout",
+                    }
+                ready, _, _ = select.select([sys.stdin], [], [], min(0.2, remaining))
+                if not ready:
+                    continue
             line = sys.stdin.readline()
             if line == "":
                 return {"id": request_id, "success": False, "cancelled": True}
@@ -809,20 +828,12 @@ def _prepare_script_agents(
 
     agents: dict[str, AgentWrapper] = {}
     unavailable: dict[str, str] = {}
-    probed: dict[str, tuple[bool, str]] = {}
     for requested_name in dict.fromkeys(required_agent_names):
         wrapper = _resolve_agent_definition(agent_defs, requested_name)
         if wrapper is None:
             unavailable[requested_name] = "未在 agents_config.json 中定义"
             continue
-
-        if wrapper.name not in probed:
-            probed[wrapper.name] = _probe_agent(wrapper, root, script_path)
-        ready, message = probed[wrapper.name]
-        if ready:
-            _add_agent_aliases(agents, wrapper)
-        else:
-            unavailable[requested_name] = message
+        _add_agent_aliases(agents, wrapper)
     return agents, unavailable
 
 
@@ -857,22 +868,12 @@ def main() -> int:
         agent_defs, required_agent_names, root, script_path)
 
     def shutdown_handler(signum, frame):
-        print(f"[runtime] 收到停止信号 {signum}，正在尝试清理录制/播放")
-        try:
-            if workflow is not None and not getattr(workflow, "_finished", False):
-                workflow.set_step("stop_record", "running", "用户停止执行，正在停止录制")
-        except Exception:
-            pass
         for key in ("glasses_bsp_node", "glasses_nviz_node", "mcu_node", "localhost"):
             wrapper = agent_defs.get(key)
             if wrapper:
                 wrapper.stop_for_shutdown()
         try:
             if workflow is not None and not getattr(workflow, "_finished", False):
-                try:
-                    workflow.set_step("stop_record", "success", "停止命令已发送")
-                except Exception:
-                    pass
                 workflow.finish(False, "用户停止执行")
         except Exception:
             channel.emit({
@@ -905,6 +906,10 @@ def main() -> int:
 
         workflow = SimpleScriptWorkflow(WorkflowQueue(channel))
         bind_workflow(workflow)
+        channel.emit({
+            "type": "required_agents",
+            "agent_names": required_agent_names,
+        })
 
         def safe_print(*print_args, **kwargs):
             kwargs.setdefault("flush", True)
@@ -928,21 +933,6 @@ def main() -> int:
             "clear_motion_status": lambda: state_cache.clear("motion_status"),
             **agents,
         }
-
-        if required_agent_names:
-            print(f"[runtime] 脚本声明节点: {', '.join(required_agent_names)}")
-        if unavailable_agents:
-            print("[runtime] 以下节点未就绪，不会注入 script_agents:")
-            for agent_name, reason in unavailable_agents.items():
-                print(f"[runtime]   - {agent_name}: {reason}")
-            lines = ["当前脚本缺失以下 node:"]
-            for agent_name, reason in unavailable_agents.items():
-                lines.append(f"- {agent_name}: {reason}")
-            message = "\n".join(lines)
-            workflow.set_steps([WorkflowStep.NODES_CHECK], title="脚本流程")
-            workflow.set_step(WorkflowStep.NODES_CHECK, "failed", message)
-            workflow.finish(False, message)
-            return 1
 
         code = script_path.read_text(encoding="utf-8")
         exec(compile(code, str(script_path), "exec"), globals_dict, globals_dict)

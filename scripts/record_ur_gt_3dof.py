@@ -4,7 +4,7 @@
 # Note: time module is provided by ScriptExecutor, no import needed
 
 # 导入公共函数库
-from nviz_ur_base import execute_trajectory_recording, safe_exit_nviz
+from nviz_ur_base import check_required_script_agents, execute_trajectory_recording, get_script_agent, safe_exit_nviz
 from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
 
 # 定义需要使用的 agent 列表（执行器会读取并初始化这些 agent）
@@ -13,6 +13,7 @@ all_agent_names = ['glasses_nviz_node','UR_node','localhost']
 print(f"[test_nviz_node] Starting script...")
 print(f"[test_nviz_node] Available agents: {all_agent_names}")
 
+cleanup_nviz = False
 
 def update_workflow(event, status, message):
     step_map = {
@@ -30,8 +31,29 @@ def update_workflow(event, status, message):
         set_step(step, status, message)
 
 
+workflow_steps = [
+    WorkflowStep.NODES_CHECK,
+    WorkflowStep.START_DEVICE,
+    WorkflowStep.MOVE_TO_START,
+    WorkflowStep.EXECUTE_TRAJECTORY,
+    WorkflowStep.START_RECORD,
+    WorkflowStep.PLAY_VIDEO,
+    WorkflowStep.STOP_RECORD,
+    WorkflowStep.STOP_DEVICE,
+    WorkflowStep.COPY_UR_FILES,
+]
+
 # 主执行逻辑
 try:
+    set_steps(workflow_steps, title="3DoF 单条轨迹录制")
+    set_step(WorkflowStep.NODES_CHECK, "running", "正在检查节点连接")
+    nodes_ready, nodes_message = check_required_script_agents(script_agents, all_agent_names)
+    if not nodes_ready:
+        set_step(WorkflowStep.NODES_CHECK, "failed", nodes_message)
+        finish(False, nodes_message)
+        raise SystemExit(1)
+    set_step(WorkflowStep.NODES_CHECK, "success", nodes_message)
+
     # 输入：1. 轨迹id，2. 眼镜sn，3.记录人名称,4.第几次录制,5.是否播放视频,6.视频路径
     # 先获取用户输入参数
     fields = [
@@ -59,78 +81,42 @@ try:
         
         print(f"[test_nviz_node] Video playback: {'Enabled' if enable_video else 'Disabled'}")
 
-        set_steps(
-            [
-                WorkflowStep.NODES_CHECK,
-                WorkflowStep.START_DEVICE,
-                WorkflowStep.MOVE_TO_START,
-                WorkflowStep.EXECUTE_TRAJECTORY,
-                WorkflowStep.START_RECORD,
-                WorkflowStep.PLAY_VIDEO,
-                WorkflowStep.STOP_RECORD,
-                WorkflowStep.STOP_DEVICE,
-                WorkflowStep.COPY_UR_FILES,
-            ],
-            title="3DoF 单条轨迹录制",
+        glasses_agent = get_script_agent(script_agents, "glasses_nviz_node")
+        ur_agent = get_script_agent(script_agents, "UR_node")
+        localhost_agent = get_script_agent(script_agents, "localhost")
+        cleanup_nviz = True
+
+        # 执行轨迹录制流程
+        run_success = execute_trajectory_recording(
+            ur_agent,
+            glasses_agent,
+            traj_id,
+            taker_number,
+            glasses_sn,
+            recorder_name,
+            time_delay,
+            record_time,
+            localhost_node=localhost_agent,
+            enable_video=enable_video,
+            progress_callback=update_workflow,
+            video_path=video_path or None
         )
+        finish(run_success, "3DoF 单条轨迹录制完成" if run_success else "3DoF 单条轨迹录制失败")
 
-        glasses_agent = script_agents.get("glasses_nviz_node")
-        ur_agent = script_agents.get("ur_node")
-        localhost_agent = script_agents.get("localhost")
-
-        missing_agents = []
-        if glasses_agent is None:
-            missing_agents.append("glasses_nviz_node")
-        if ur_agent is None:
-            missing_agents.append("UR_node")
-        if enable_video and localhost_agent is None:
-            missing_agents.append("localhost")
-
-        if missing_agents:
-            agent_target_info = {
-                "glasses_nviz_node": "目标IP=localhost，goal_port=5692，feedback_port=5693",
-                "UR_node": "目标IP=192.168.10.213，goal_port=5557，feedback_port=5558",
-                "localhost": "目标IP=localhost，无独立端口",
-            }
-            error_lines = ["当前脚本缺失以下 node:"]
-            for agent_name in missing_agents:
-                target_info = agent_target_info.get(agent_name, "目标IP=未知，端口=未知")
-                error_lines.append(f"- {agent_name}: {target_info}")
-            error_message = "\n".join(error_lines)
-            set_step(WorkflowStep.NODES_CHECK, "failed", error_message)
-            finish(False, error_message)
-        else:
-            set_step(WorkflowStep.NODES_CHECK, "success", "所有节点已连接")
-
-            # 执行轨迹录制流程
-            run_success = execute_trajectory_recording(
-                ur_agent,
-                glasses_agent,
-                traj_id,
-                taker_number,
-                glasses_sn,
-                recorder_name,
-                time_delay,
-                record_time,
-                localhost_node=localhost_agent,
-                enable_video=enable_video,
-                progress_callback=update_workflow,
-                video_path=video_path or None
-            )
-            finish(run_success, "3DoF 单条轨迹录制完成" if run_success else "3DoF 单条轨迹录制失败")
-
-except:
+except Exception:
     print(f"[test_nviz_node] 脚本执行出错")
     try:
         finish(False, "脚本执行出错")
     except Exception:
         pass
-    try:
-        safe_exit_nviz(script_agents.get("glasses_nviz_node"), "脚本异常退出")
-    except Exception:
-        pass
+    if cleanup_nviz:
+        try:
+            safe_exit_nviz(get_script_agent(script_agents, "glasses_nviz_node"), "脚本异常退出")
+        except Exception:
+            pass
 finally:
-    try:
-        safe_exit_nviz(script_agents.get("glasses_nviz_node"), "脚本结束清理")
-    except Exception:
-        pass
+    if cleanup_nviz:
+        try:
+            safe_exit_nviz(get_script_agent(script_agents, "glasses_nviz_node"), "脚本结束清理")
+        except Exception:
+            pass

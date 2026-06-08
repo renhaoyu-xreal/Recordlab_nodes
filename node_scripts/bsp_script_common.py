@@ -11,13 +11,34 @@ from typing import Optional, Tuple
 import paramiko
 
 nodes_root = Path(__file__).resolve().parents[1]
+if str(nodes_root) not in sys.path:
+    sys.path.insert(0, str(nodes_root))
 echo_python = Path(os.environ.get("ECHO_MESSAGE_SYSTEM_PYTHON_ROOT", str(nodes_root.parent / "echo_message_system" / "python")))
 if echo_python.exists() and str(echo_python) not in sys.path:
     sys.path.insert(0, str(echo_python))
 
 from message_system import ActionClient  # noqa: E402
+from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps  # noqa: E402
 
 UNKNOWN_GLASSES_ID = "UNKNOWN_GLASSES"
+
+
+def begin_bsp_workflow(title: str, steps):
+    set_steps([WorkflowStep.NODES_CHECK, *steps], title=title)
+    set_step(WorkflowStep.NODES_CHECK, "running", "正在连接 BSP 节点")
+
+
+def mark_bsp_connected():
+    set_step(WorkflowStep.NODES_CHECK, "success", "BSP 节点已连接")
+
+
+def mark_bsp_connect_failed(message: str):
+    set_step(WorkflowStep.NODES_CHECK, "failed", message)
+    finish(False, message)
+
+
+def finish_bsp_workflow(success: bool, message: str):
+    finish(success, message)
 
 
 def sanitize_token(value: Optional[str], fallback: str) -> str:

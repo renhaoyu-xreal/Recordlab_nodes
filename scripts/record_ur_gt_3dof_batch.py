@@ -5,7 +5,9 @@
 from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
 from nviz_ur_base import (
     build_record_dataset_name,
+    check_required_script_agents,
     extract_root_path,
+    get_script_agent,
     get_program_config,
     safe_exit_nviz,
     wait_for_command,
@@ -20,6 +22,8 @@ all_agent_names = ['glasses_nviz_node', 'UR_node', 'localhost']
 
 print(f"[batch_recording] Starting batch recording script...")
 print(f"[batch_recording] Available agents: {all_agent_names}")
+
+cleanup_nviz = False
 
 initial_steps = [
     WorkflowStep.NODES_CHECK,
@@ -38,15 +42,20 @@ set_step(WorkflowStep.NODES_CHECK, "running", "正在检查节点连接")
 
 def fail_if_unavailable_agents():
     unavailable = globals().get("unavailable_script_agents") or {}
-    if not unavailable:
-        return
-    error_lines = ["当前脚本缺失以下 node:"]
-    for agent_name, reason in unavailable.items():
-        error_lines.append(f"- {agent_name}: {reason}")
-    error_message = "\n".join(error_lines)
-    set_step(WorkflowStep.NODES_CHECK, "failed", error_message)
-    finish(False, error_message)
-    raise SystemExit(1)
+    if unavailable:
+        error_lines = ["当前脚本缺失以下 node:"]
+        for agent_name, reason in unavailable.items():
+            error_lines.append(f"- {agent_name}: {reason}")
+        error_message = "\n".join(error_lines)
+        set_step(WorkflowStep.NODES_CHECK, "failed", error_message)
+        finish(False, error_message)
+        raise SystemExit(1)
+    ready, message = check_required_script_agents(script_agents, all_agent_names)
+    if not ready:
+        set_step(WorkflowStep.NODES_CHECK, "failed", message)
+        finish(False, message)
+        raise SystemExit(1)
+    set_step(WorkflowStep.NODES_CHECK, "success", message)
 
 
 def parse_trajectory_list(traj_list_str):
@@ -112,9 +121,9 @@ try:
             failed_count = 0
 
             # 小写agent名称获取
-            glasses_agent = script_agents.get("glasses_nviz_node")
-            ur_agent = script_agents.get("ur_node")
-            localhost_agent = script_agents.get("localhost")
+            glasses_agent = get_script_agent(script_agents, "glasses_nviz_node")
+            ur_agent = get_script_agent(script_agents, "UR_node")
+            localhost_agent = get_script_agent(script_agents, "localhost")
 
             for index, (traj_id, taker_number) in enumerate(trajectory_pairs, 1):
                 print(f"\n[batch_recording] ========================================")
@@ -167,6 +176,7 @@ try:
                     run_success = True
                     error_message = ""
                     video_started = False
+                    cleanup_nviz = True
 
                     if enable_video and localhost_agent:
                         print("[batch_recording] Stopping any previous video playback...")
@@ -414,12 +424,14 @@ try:
 
 except Exception as e:
     print(f"[batch_recording] 脚本执行出错: {e}")
-    try:
-        safe_exit_nviz(glasses_agent, "脚本异常退出")
-    except Exception:
-        pass
+    if cleanup_nviz:
+        try:
+            safe_exit_nviz(glasses_agent, "脚本异常退出")
+        except Exception:
+            pass
 finally:
-    try:
-        safe_exit_nviz(glasses_agent, "批量录制脚本结束清理")
-    except Exception:
-        pass
+    if cleanup_nviz:
+        try:
+            safe_exit_nviz(glasses_agent, "批量录制脚本结束清理")
+        except Exception:
+            pass
