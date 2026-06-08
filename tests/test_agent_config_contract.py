@@ -105,6 +105,33 @@ def test_agents_config_contains_mcu_agent_and_script():
         assert "port" not in topic
 
 
+def test_agents_config_contains_android_primary_agent_and_scripts():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "agents_config.json"
+    nodes_root = config_path.parents[1]
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    agent = config["agents"]["android"]
+    expanded = load_agent_config(str(config_path), "android")
+
+    assert agent["node_class"].endswith(".AndroidNode")
+    assert agent["topics"] == "android_sensor_topics"
+    assert agent["sensor_layout"] == "android_sensor_workspace"
+    assert "android" in config["primary_agents"]
+    assert {topic["name"] for topic in expanded["topics"]} >= {
+        "android_imu_data",
+        "record_timer",
+        "node_cookie",
+    }
+    scripts = set(agent["default_scripts"])
+    assert {
+        "scripts/record_android_imu_simple_test.py",
+        "scripts/record_ur_android_imu_batch.py",
+    } <= scripts
+    for script in scripts:
+        assert (nodes_root / script).exists()
+    for topic in expanded["topics"]:
+        assert "port" not in topic
+
+
 def test_node_runtime_rejects_old_topic_port_config():
     with pytest.raises(KeyError):
         validate_agent_config({"name": "bad", "topics": []})
