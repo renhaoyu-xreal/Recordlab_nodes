@@ -516,7 +516,10 @@
         "remote_dir": "/sdcard/3dof_data"
       },
       "init_device_pause_duration": 1.0,
-      "default_scripts": [],
+      "watchdog_start_device": false,
+      "default_scripts": [
+        "scripts/record_nebula_simple_test.py"
+      ],
       "exposed_commands": "standard_device",
       "commands": "standard_device_timeouts",
       "sensor_layout": "nebula_summary_workspace",
