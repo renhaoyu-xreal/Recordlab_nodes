@@ -1,5 +1,6 @@
 TOPIC_CAMERA = "camera_data"
 TOPIC_IMU = "imu_data"
+TOPIC_ANDROID_IMU = "android_imu_data"
 TOPIC_RECORD_TIMER = "record_timer"
 TOPIC_TIME_DELAY = "time_delay"
 TOPIC_MOTION_STATUS = "motion_status"

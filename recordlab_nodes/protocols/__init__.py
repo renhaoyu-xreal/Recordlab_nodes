@@ -1,0 +1,1 @@
+"""Shared device protocol helpers."""

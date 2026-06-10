@@ -2,6 +2,7 @@
 # It records parsed data from Android TCP port 8100 through the android agent.
 
 from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
+import json
 import time
 from time import monotonic, sleep
 
@@ -26,6 +27,13 @@ def _extract_root_path(result):
     message = result.get("message")
     if isinstance(message, dict):
         return message.get("root_path", "")
+    if isinstance(message, str):
+        try:
+            decoded = json.loads(message)
+            if isinstance(decoded, dict):
+                return decoded.get("root_path", "")
+        except Exception:
+            pass
     return ""
 
 
