@@ -300,7 +300,7 @@ class AgentWrapper:
 
     def stop_for_shutdown(self) -> None:
         try:
-            if self._name in {"glasses_bsp_node", "glasses_nviz_node", "mcu_node"}:
+            if self._name in {"glasses_bsp_node", "glasses_nviz_node", "mcu_node", "android", "nebula_trial"}:
                 self.cmd("stop_record", {}, timeout=8.0)
                 self.cmd("stop_device", {}, timeout=8.0)
             if self._name == "localhost":
@@ -629,19 +629,30 @@ class RuntimeStateCache:
     """Long-lived subscribers for script-visible global state values."""
 
     _TOPICS = {
-        "record_timer": ("record_timer", 16520),
-        "time_delay": ("time_delay", 16521),
-        "motion_status": ("motion_status", 16525),
+        "record_timer": "record_timer",
+        "time_delay": "time_delay",
+        "motion_status": "motion_status",
     }
 
-    def __init__(self, root: Path, host: str = "localhost"):
+    def __init__(
+        self,
+        root: Path,
+        config_path: Path,
+        preferred_agent_name: str = "",
+        required_agent_names: list[str] | None = None,
+        host: str = "127.0.0.1",
+    ):
         self._root = root
+        self._config_path = config_path
+        self._preferred_agent_name = preferred_agent_name
+        self._required_agent_names = list(required_agent_names or [])
         self._host = host
         self._lock = threading.Lock()
         self._values: dict[str, Any] = {}
         self._raw: dict[str, Any] = {}
         self._subscribers: list[Any] = []
         self._available = False
+        self._topic_sources = self._resolve_topic_sources()
 
     def start(self) -> None:
         try:
@@ -651,23 +662,30 @@ class RuntimeStateCache:
             print(f"[runtime] State cache disabled: {exc}", flush=True)
             return
 
-        for state_key, (topic, port) in self._TOPICS.items():
+        for state_key, source in self._topic_sources.items():
+            topic = source["topic"]
+            port = source["port"]
+            host = source["host"]
             try:
                 subscriber = Subscriber(
                     name=f"recordlab_script_{state_key}",
                     topic=topic,
                     callback=lambda _topic, data, key=state_key: self._on_data(key, data),
-                    host=self._host,
+                    host=host,
                     port=port,
                     encoding="json",
                 )
                 subscriber.start()
                 self._subscribers.append(subscriber)
             except Exception as exc:
-                print(f"[runtime] Failed to subscribe {topic} on {self._host}:{port}: {exc}", flush=True)
+                print(f"[runtime] Failed to subscribe {topic} on {host}:{port}: {exc}", flush=True)
         self._available = bool(self._subscribers)
         if self._available:
-            print("[runtime] State cache subscribers started: record_timer, time_delay, motion_status", flush=True)
+            details = ", ".join(
+                f"{state_key}<-{source['agent_name']}@{source['host']}:{source['port']}"
+                for state_key, source in self._topic_sources.items()
+            )
+            print(f"[runtime] State cache subscribers started: {details}", flush=True)
 
     def close(self) -> None:
         for subscriber in self._subscribers:
@@ -676,6 +694,7 @@ class RuntimeStateCache:
             except Exception:
                 pass
         self._subscribers.clear()
+        self._available = False
 
     def get(self, state_key: str):
         with self._lock:
@@ -693,6 +712,59 @@ class RuntimeStateCache:
         with self._lock:
             self._raw[state_key] = data
             self._values[state_key] = value
+
+    def _resolve_topic_sources(self) -> dict[str, dict[str, Any]]:
+        try:
+            config = json.loads(self._config_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+        raw_agents = config.get("agents") or {}
+        topic_sets = ((config.get("shared") or {}).get("topic_sets") or {})
+
+        def agent_topics(agent_name: str) -> set[str]:
+            agent_config = raw_agents.get(agent_name)
+            if not isinstance(agent_config, dict):
+                return set()
+            topics = agent_config.get("topics", [])
+            if isinstance(topics, str):
+                topics = topic_sets.get(topics, [])
+            if not isinstance(topics, list):
+                return set()
+            return {
+                topic.get("name")
+                for topic in topics
+                if isinstance(topic, dict) and isinstance(topic.get("name"), str)
+            }
+
+        candidate_names: list[str] = []
+        seen = set()
+        for agent_name in [self._preferred_agent_name, *self._required_agent_names, *raw_agents.keys()]:
+            if not agent_name or agent_name in seen:
+                continue
+            seen.add(agent_name)
+            candidate_names.append(agent_name)
+
+        sources: dict[str, dict[str, Any]] = {}
+        for state_key, topic_name in self._TOPICS.items():
+            for agent_name in candidate_names:
+                agent_config = raw_agents.get(agent_name)
+                if not isinstance(agent_config, dict):
+                    continue
+                if topic_name not in agent_topics(agent_name):
+                    continue
+                data_port = agent_config.get("data_port")
+                if not isinstance(data_port, int):
+                    continue
+                host = str(agent_config.get("subnode_host") or self._host)
+                sources[state_key] = {
+                    "agent_name": agent_name,
+                    "topic": topic_name,
+                    "host": host,
+                    "port": data_port,
+                }
+                break
+        return sources
 
     @staticmethod
     def _extract_value(state_key: str, data: Any):
@@ -720,6 +792,8 @@ def _agent_cmd_path(root: Path) -> Path:
 
 def _state_value(root: Path, state_key: str, timeout: float = 1.0):
     tool = _agent_cmd_path(root)
+    if not tool.exists():
+        return None
     result_path = _make_result_path()
     try:
         subprocess.run(
@@ -850,6 +924,48 @@ def _install_paths(root: Path, script_path: Path) -> None:
             sys.path.insert(0, text)
 
 
+def _transition_workflow_for_stop(workflow, channel: EventChannel) -> None:
+    if workflow is None:
+        channel.emit({
+            "type": "workflow",
+            "action": "finish",
+            "finished": True,
+            "success": True,
+            "message": "用户停止执行，已正常收尾",
+            "steps": [],
+        })
+        return
+
+    steps = getattr(workflow, "_steps", [])
+    message = "用户停止执行，正在收尾"
+    updated = False
+    for step in steps:
+        if step.get("status") == "running":
+            step["status"] = "stopping"
+            step["message"] = message
+            updated = True
+    if not updated:
+        for step in steps:
+            if step.get("status") == "pending":
+                step["status"] = "stopping"
+                step["message"] = message
+                updated = True
+                break
+    if updated:
+        workflow._message = message
+        workflow._emit("state")
+
+    stopped_message = "用户停止执行，已正常收尾"
+    for step in steps:
+        if step.get("status") == "stopping":
+            step["status"] = "stopped"
+            step["message"] = stopped_message
+    workflow._finished = True
+    workflow._success = True
+    workflow._message = stopped_message
+    workflow._emit("state")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", required=True)
@@ -868,28 +984,27 @@ def main() -> int:
         agent_defs, required_agent_names, root, script_path)
 
     def shutdown_handler(signum, frame):
-        for key in ("glasses_bsp_node", "glasses_nviz_node", "mcu_node", "localhost"):
+        for key in ("glasses_bsp_node", "glasses_nviz_node", "mcu_node", "android", "nebula_trial", "localhost"):
             wrapper = agent_defs.get(key)
             if wrapper:
                 wrapper.stop_for_shutdown()
         try:
             if workflow is not None and not getattr(workflow, "_finished", False):
-                workflow.finish(False, "用户停止执行")
+                _transition_workflow_for_stop(workflow, channel)
         except Exception:
-            channel.emit({
-                "type": "workflow",
-                "action": "finish",
-                "finished": True,
-                "success": False,
-                "message": "用户停止执行",
-            })
+            _transition_workflow_for_stop(None, channel)
         raise SystemExit(130)
 
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
     _install_paths(root, script_path)
-    state_cache = RuntimeStateCache(root)
+    state_cache = RuntimeStateCache(
+        root,
+        config_path,
+        preferred_agent_name=os.environ.get("RECORDLAB_AGENT", ""),
+        required_agent_names=required_agent_names,
+    )
     state_cache.start()
     sys.argv = [str(script_path), *args.script_args]
     workflow = None
@@ -942,6 +1057,8 @@ def main() -> int:
     except SystemExit as exc:
         if workflow is not None and getattr(workflow, "_finished", False) and getattr(workflow, "_success", True) is False:
             return 1
+        if workflow is not None and getattr(workflow, "_finished", False) and getattr(workflow, "_success", False):
+            return 0
         code = exc.code if isinstance(exc.code, int) else 0
         return code
     except Exception:

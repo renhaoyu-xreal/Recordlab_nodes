@@ -155,9 +155,21 @@
         "record_timer": {
           "display_name": "record_timer",
           "ui_widget": "value"
+        },
+        "time_delay": {
+          "display_name": "time_delay",
+          "ui_widget": "value"
         }
       },
       "nebula_summary_workspace": {
+        "record_timer": {
+          "display_name": "record_timer",
+          "ui_widget": "value"
+        },
+        "time_delay": {
+          "display_name": "time_delay",
+          "ui_widget": "value"
+        },
         "nebula_latest_csv": {
           "display_name": "Nebula 最新数据",
           "ui_widget": "summary_value",
@@ -303,6 +315,11 @@
           "ui_max_hz": 10
         },
         {
+          "name": "time_delay",
+          "encoding": "json",
+          "ui_max_hz": 10
+        },
+        {
           "name": "node_cookie",
           "encoding": "json",
           "ui_max_hz": 5,
@@ -314,6 +331,11 @@
       "nebula_summary_topics": [
         {
           "name": "record_timer",
+          "encoding": "json",
+          "ui_max_hz": 10
+        },
+        {
+          "name": "time_delay",
           "encoding": "json",
           "ui_max_hz": 10
         },

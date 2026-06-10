@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,10 +111,15 @@ def test_script_runtime_fails_nodes_check_when_host_bridge_does_not_reply(tmp_pa
     script_path.write_text(
         "all_agent_names = ['glasses_nviz_node', 'UR_node']\n"
         "from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps\n"
-        "from nviz_ur_base import check_required_script_agents\n"
+        "from scripts.common.script_agent_helpers import check_required_script_agents\n"
         "set_steps([WorkflowStep.NODES_CHECK, WorkflowStep.START_DEVICE, WorkflowStep.STOP_RECORD], title='桥接超时流程')\n"
         "set_step(WorkflowStep.NODES_CHECK, 'running', '正在检查节点连接')\n"
-        "ready, message = check_required_script_agents(script_agents, all_agent_names, timeout=0.1)\n"
+        "ready, message = check_required_script_agents(\n"
+        "    script_agents,\n"
+        "    all_agent_names,\n"
+        "    timeout=0.1,\n"
+        "    unavailable_script_agents=globals().get('unavailable_script_agents'),\n"
+        ")\n"
         "if not ready:\n"
         "    set_step(WorkflowStep.NODES_CHECK, 'failed', message)\n"
         "    finish(False, message)\n"
@@ -177,3 +183,100 @@ def test_script_runtime_fails_nodes_check_when_host_bridge_does_not_reply(tmp_pa
     assert final["steps"][0]["status"] == "failed"
     assert final["steps"][1]["status"] == "pending"
     assert final["steps"][2]["status"] == "pending"
+
+
+def test_runtime_state_cache_prefers_active_agent_and_falls_back_to_required_agent(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from scripts.runtime.run_recordlab_script import RuntimeStateCache
+
+    config_path = tmp_path / "agents_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "shared": {
+                    "topic_sets": {
+                        "android_topics": [
+                            {"name": "record_timer", "encoding": "json"},
+                            {"name": "time_delay", "encoding": "json"},
+                        ],
+                        "bsp_topics": [
+                            {"name": "record_timer", "encoding": "json"},
+                            {"name": "time_delay", "encoding": "json"},
+                            {"name": "motion_status", "encoding": "json"},
+                        ],
+                        "other_topics": [
+                            {"name": "motion_status", "encoding": "json"},
+                        ],
+                    }
+                },
+                "agents": {
+                    "android": {
+                        "data_port": 17001,
+                        "subnode_host": "127.0.0.2",
+                        "topics": "android_topics",
+                    },
+                    "glasses_bsp_node": {
+                        "data_port": 17002,
+                        "subnode_host": "127.0.0.3",
+                        "topics": "bsp_topics",
+                    },
+                    "other_node": {
+                        "data_port": 17003,
+                        "subnode_host": "127.0.0.4",
+                        "topics": "other_topics",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cache = RuntimeStateCache(
+        root=ROOT,
+        config_path=config_path,
+        preferred_agent_name="android",
+        required_agent_names=["glasses_bsp_node"],
+    )
+
+    assert cache._topic_sources["record_timer"] == {
+        "agent_name": "android",
+        "topic": "record_timer",
+        "host": "127.0.0.2",
+        "port": 17001,
+    }
+    assert cache._topic_sources["time_delay"] == {
+        "agent_name": "android",
+        "topic": "time_delay",
+        "host": "127.0.0.2",
+        "port": 17001,
+    }
+    assert cache._topic_sources["motion_status"] == {
+        "agent_name": "glasses_bsp_node",
+        "topic": "motion_status",
+        "host": "127.0.0.3",
+        "port": 17002,
+    }
+
+
+def test_transition_workflow_for_stop_marks_stopped_success():
+    sys.path.insert(0, str(ROOT))
+    from flowagent.core.script_workflow import SimpleScriptWorkflow, WorkflowStep
+    from scripts.runtime.run_recordlab_script import EventChannel, _transition_workflow_for_stop
+
+    events = []
+    queue = SimpleNamespace(put_nowait=events.append)
+    workflow = SimpleScriptWorkflow(queue)
+    workflow.set_steps([WorkflowStep.NODES_CHECK, WorkflowStep.START_RECORD, WorkflowStep.STOP_RECORD], title="停止流程")
+    workflow.set_step(WorkflowStep.NODES_CHECK, "success", "节点已连接")
+    workflow.set_step(WorkflowStep.START_RECORD, "running", "录制中")
+
+    _transition_workflow_for_stop(workflow, EventChannel())
+
+    assert workflow._finished is True
+    assert workflow._success is True
+    assert workflow._message == "用户停止执行，已正常收尾"
+    assert workflow._steps[1]["status"] == "stopped"
+    assert workflow._steps[1]["message"] == "用户停止执行，已正常收尾"
+    assert events[-1]["finished"] is True
+    assert events[-1]["success"] is True
+    assert events[-1]["steps"][1]["status"] == "stopped"

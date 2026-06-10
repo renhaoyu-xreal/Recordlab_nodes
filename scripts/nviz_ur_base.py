@@ -1,10 +1,8 @@
 """
 NViz & UR 录制公共函数库
 
-提供给脚本使用的通用工具函数，包括：
-- 日期时间工具
-- 设备控制函数
-- 轨迹录制函数
+提供给脚本使用的 NViz/UR 业务工具函数；通用 agent helper 已迁到
+`scripts.common.script_agent_helpers`。
 """
 
 
@@ -15,57 +13,11 @@ from scripts.common.record_path_helper import (
     resolve_record_glasses_label,
     sanitize_record_token,
 )
-
-
-def notify_progress(progress_callback, event, status, message):
-    """向脚本回调底层事实事件。"""
-    if not progress_callback:
-        return
-    try:
-        progress_callback(event, status, message)
-    except Exception as e:
-        print(f"[nviz_ur_base] Warning: progress_callback failed: {e}")
-
-
-def get_script_agent(script_agents, agent_name):
-    if not script_agents:
-        return None
-    return script_agents.get(agent_name) or script_agents.get(str(agent_name).lower())
-
-
-def check_required_script_agents(script_agents, agent_names, timeout=2.0):
-    """脚本流程的节点准备检查：只通过 Host bridge 发送 check 命令。"""
-    def concise_reason(result):
-        message = str(result.get("message") or result)
-        if "Host bridge command timeout" in message:
-            return "连接超时/无响应"
-        if "当前没有可用 Agent client" in message:
-            return "节点未连接"
-        return message
-
-    errors = []
-    checked_agents = {}
-    for agent_name in agent_names:
-        agent = get_script_agent(script_agents, agent_name)
-        if agent is None:
-            reason = (globals().get("unavailable_script_agents") or {}).get(agent_name)
-            errors.append(f"- {agent_name}: {reason or '未在 agents_config.json 中定义或未注入'}")
-            continue
-        canonical_name = getattr(agent, "name", agent_name)
-        if canonical_name in checked_agents:
-            continue
-        checked_agents[canonical_name] = agent
-        try:
-            result = agent.cmd("check", {}, timeout=timeout)
-        except Exception as exc:
-            errors.append(f"- {agent_name}: check 异常: {exc}")
-            continue
-        if not result.get("success"):
-            errors.append(f"- {agent_name}: {concise_reason(result)}")
-
-    if errors:
-        return False, "当前脚本缺失以下 node:\n" + "\n".join(errors)
-    return True, "所有节点已连接"
+from scripts.common.script_agent_helpers import (
+    check_required_script_agents,
+    get_script_agent,
+    notify_progress,
+)
 
 def get_date_string():
     """获取当天日期字符串，格式: 20260109
@@ -115,7 +67,7 @@ def extract_root_path(command_result):
     return ""
 
 
-def safe_exit_nviz(glasses_nviz_node, message="脚本结束"):
+def safe_exit_nviz(glasses_nviz_node, message="脚本结束", stop_device=True):
     """安全退出：停止NViz设备并显示消息
     
     Args:
@@ -124,11 +76,14 @@ def safe_exit_nviz(glasses_nviz_node, message="脚本结束"):
     """
     print(f"[nviz_ur_base] {message}")
     
-    try:
-        print("[nviz_ur_base] Stopping device...")
-        glasses_nviz_node.cmd("stop_device", {})
-    except:
-        print(f"[nviz_ur_base] Warning: stop_device failed")
+    if stop_device:
+        try:
+            print("[nviz_ur_base] Stopping device...")
+            glasses_nviz_node.cmd("stop_device", {})
+        except:
+            print(f"[nviz_ur_base] Warning: stop_device failed")
+    else:
+        print("[nviz_ur_base] Keeping device connected.")
     
     print("[nviz_ur_base] Cleanup done.")
 
@@ -387,15 +342,10 @@ def execute_trajectory_recording(ur_node, glasses_nviz_node, traj_id, taker_numb
             video_success = False
             notify_progress(progress_callback, "play_video", "failed", f"停止视频失败: {stop_video_result}")
     
-    # 停止设备
-    notify_progress(progress_callback, "stop_device", "running", "正在停止设备")
-    print("[nviz_ur_base] Stopping NViz device...")
-    stop_device_result = glasses_nviz_node.cmd("stop_device")
-    print(f"[nviz_ur_base] stop_device result: {stop_device_result}")
-    if stop_device_result.get("success"):
-        notify_progress(progress_callback, "stop_device", "success", "stop_device 成功")
-    else:
-        notify_progress(progress_callback, "stop_device", "failed", f"stop_device 失败: {stop_device_result}")
+    # 正常录制完成后保持设备连接，只有异常/用户停止时才走设备级清理。
+    stop_device_success = True
+    notify_progress(progress_callback, "stop_device", "success", "录制完成，设备保持连接")
+    print("[nviz_ur_base] Keeping NViz device connected after successful recording.")
 
     # 等待数据落盘（根据录制时长计算等待时间）
     if final_record_time is not None and final_record_time > 0:
@@ -445,6 +395,6 @@ def execute_trajectory_recording(ur_node, glasses_nviz_node, traj_id, taker_numb
         and video_success
         and trajectory_success
         and stop_result.get("success")
-        and stop_device_result.get("success")
+        and stop_device_success
         and copy_result.get("success")
     )

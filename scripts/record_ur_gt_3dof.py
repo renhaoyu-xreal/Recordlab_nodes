@@ -4,8 +4,9 @@
 # Note: time module is provided by ScriptExecutor, no import needed
 
 # 导入公共函数库
-from nviz_ur_base import check_required_script_agents, execute_trajectory_recording, get_script_agent, safe_exit_nviz
+from nviz_ur_base import execute_trajectory_recording, safe_exit_nviz
 from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
+from scripts.common.script_agent_helpers import check_required_script_agents, get_script_agent
 
 # 定义需要使用的 agent 列表（执行器会读取并初始化这些 agent）
 all_agent_names = ['glasses_nviz_node','UR_node','localhost']
@@ -14,6 +15,7 @@ print(f"[test_nviz_node] Starting script...")
 print(f"[test_nviz_node] Available agents: {all_agent_names}")
 
 cleanup_nviz = False
+keep_device_connected = False
 
 def update_workflow(event, status, message):
     step_map = {
@@ -47,7 +49,11 @@ workflow_steps = [
 try:
     set_steps(workflow_steps, title="3DoF 单条轨迹录制")
     set_step(WorkflowStep.NODES_CHECK, "running", "正在检查节点连接")
-    nodes_ready, nodes_message = check_required_script_agents(script_agents, all_agent_names)
+    nodes_ready, nodes_message = check_required_script_agents(
+        script_agents,
+        all_agent_names,
+        unavailable_script_agents=globals().get("unavailable_script_agents"),
+    )
     if not nodes_ready:
         set_step(WorkflowStep.NODES_CHECK, "failed", nodes_message)
         finish(False, nodes_message)
@@ -95,12 +101,13 @@ try:
             glasses_sn,
             recorder_name,
             time_delay,
-            record_time,
+            record_timer,
             localhost_node=localhost_agent,
             enable_video=enable_video,
             progress_callback=update_workflow,
             video_path=video_path or None
         )
+        keep_device_connected = run_success
         finish(run_success, "3DoF 单条轨迹录制完成" if run_success else "3DoF 单条轨迹录制失败")
 
 except Exception:
@@ -115,7 +122,7 @@ except Exception:
         except Exception:
             pass
 finally:
-    if cleanup_nviz:
+    if cleanup_nviz and not keep_device_connected:
         try:
             safe_exit_nviz(get_script_agent(script_agents, "glasses_nviz_node"), "脚本结束清理")
         except Exception:

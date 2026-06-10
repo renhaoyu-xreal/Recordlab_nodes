@@ -121,6 +121,7 @@ def test_android_config_contract_loads_primary_agent():
     assert {topic["name"] for topic in expanded["topics"]} >= {
         "android_imu_data",
         "record_timer",
+        "time_delay",
         "node_cookie",
     }
     assert all("port" not in topic for topic in expanded["topics"])
@@ -162,6 +163,10 @@ def test_mobile_data_publish_and_record_csv_sorted(monkeypatch, tmp_path):
     assert stop["success"]
     assert any(topic == "android_imu_data" for topic, _ in runtime.published)
     assert any(topic == "record_timer" for topic, _ in runtime.published)
+    delay_payloads = [data for topic, data in runtime.published if topic == "time_delay"]
+    assert delay_payloads
+    assert delay_payloads[-1]["status"] == "valid"
+    assert delay_payloads[-1]["time_delay_ns"] >= 0
     rows = list(csv.DictReader(open(stop["csv_path"], encoding="utf-8")))
     assert [float(row["onsensor_timestamp_us"]) for row in rows] == [1.0, 3.0]
 

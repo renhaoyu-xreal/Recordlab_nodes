@@ -60,6 +60,7 @@ class BspMainNode(MainNode):
         self.last_motion_status = None
         self.latest_motion_message = {"status": "none"}
         self.last_camera_snapshot_feed_ns = {0: 0, 1: 0}
+        self.sensor_time_offset_ns: Optional[int] = None
 
     def check(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return self.device.check()
@@ -75,12 +76,14 @@ class BspMainNode(MainNode):
         self.camera_shm_writer.close(unlink=True)
 
     def init_device(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self.sensor_time_offset_ns = None
         result = self.device.initialize(params or {})
         if result.get("success"):
             self._publish_device_cookies()
         return result
 
     def start_device(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self.sensor_time_offset_ns = None
         result = self.device.start(params or {})
         if result.get("success"):
             self._publish_device_cookies()
@@ -223,13 +226,23 @@ class BspMainNode(MainNode):
     def _on_imu(self, imu_msg: Dict[str, Any]) -> None:
         self.publish(TOPIC_IMU, imu_msg)
         now_ns = time.time_ns()
+        sensor_timestamp_ns = int(imu_msg.get("timestamp_ns", 0) or 0)
+        if sensor_timestamp_ns > 0 and self.sensor_time_offset_ns is None:
+            self.sensor_time_offset_ns = now_ns - sensor_timestamp_ns
         if self._should_publish(now_ns, self.last_time_delay_publish_ns, 100_000_000):
             self.last_time_delay_publish_ns = now_ns
+            if sensor_timestamp_ns > 0 and self.sensor_time_offset_ns is not None:
+                aligned_sensor_time_ns = sensor_timestamp_ns + self.sensor_time_offset_ns
+                delay_ns = max(0, now_ns - aligned_sensor_time_ns)
+                delay_status = "estimated"
+            else:
+                delay_ns = 0
+                delay_status = "unavailable"
             self.publish(TOPIC_TIME_DELAY, {
                 "name": TOPIC_TIME_DELAY,
                 "timestamp_ns": now_ns,
-                "time_delay_ns": 0,
-                "status": "",
+                "time_delay_ns": delay_ns,
+                "status": delay_status,
             })
         motion_msg = self.motion_detector.detect(imu_msg)
         motion_status = motion_msg.get("status")

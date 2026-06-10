@@ -72,11 +72,12 @@ class ImuSimNode(MainNode):
     def _on_imu(self, imu_msg: Dict[str, Any]) -> None:
         self.publish(TOPIC_IMU, imu_msg)
         now_ns = time.time_ns()
+        sample_timestamp_ns = int(imu_msg.get("timestamp_ns", 0) or 0)
         self.publish(TOPIC_TIME_DELAY, {
             "name": TOPIC_TIME_DELAY,
             "timestamp_ns": now_ns,
-            "time_delay_ns": 0,
-            "status": "",
+            "time_delay_ns": max(0, now_ns - sample_timestamp_ns) if sample_timestamp_ns > 0 else 0,
+            "status": "valid" if sample_timestamp_ns > 0 else "unavailable",
         })
         self.publish(TOPIC_MOTION_STATUS, self.motion_detector.detect(imu_msg))
         if self.recording:

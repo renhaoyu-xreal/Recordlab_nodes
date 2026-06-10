@@ -121,6 +121,7 @@ def test_agents_config_contains_android_primary_agent_and_scripts():
     assert {topic["name"] for topic in expanded["topics"]} >= {
         "android_imu_data",
         "record_timer",
+        "time_delay",
         "node_cookie",
     }
     scripts = set(agent["default_scripts"])
@@ -146,9 +147,12 @@ def test_agents_config_contains_nebula_primary_agent():
     assert "nebula_trial" in config["primary_agents"]
     assert {topic["name"] for topic in expanded["topics"]} >= {
         "record_timer",
+        "time_delay",
         "node_cookie",
     }
     assert expanded["sensor_layout"]["nebula_latest_csv"]["ui_widget"] == "summary_value"
+    assert expanded["sensor_layout"]["record_timer"]["ui_widget"] == "value"
+    assert expanded["sensor_layout"]["time_delay"]["ui_widget"] == "value"
     assert all("port" not in topic for topic in expanded["topics"])
 
 

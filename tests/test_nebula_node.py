@@ -27,8 +27,10 @@ def make_node(tmp_path):
 
 def install_adb_mocks(monkeypatch):
     commands = []
+    remote_csv_cleared = False
 
     def fake_run(args, **kwargs):
+        nonlocal remote_csv_cleared
         commands.append(list(args))
         if args[:2] == ["adb", "devices"]:
             return SimpleNamespace(returncode=0, stdout="List of devices attached\nUSB123\tdevice\n", stderr="")
@@ -42,7 +44,12 @@ def install_adb_mocks(monkeypatch):
             return SimpleNamespace(returncode=0, stdout="    inet 192.168.0.10/24 brd 192.168.0.255\n", stderr="")
         if 'pm path "com.xreal.evapro.nebula"' in args[-1]:
             return SimpleNamespace(returncode=0, stdout="package:/data/app/nebula/base.apk\n", stderr="")
+        if 'rm -f "/sdcard/3dof_data"/*.csv' in args[-1]:
+            remote_csv_cleared = True
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         if 'for f in "/sdcard/3dof_data"/*.csv; do [ -e "$f" ] && echo "$f"; done; true' in args[-1]:
+            if remote_csv_cleared:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             return SimpleNamespace(
                 returncode=0,
                 stdout="/sdcard/3dof_data/demo_air_data.csv\n/sdcard/3dof_data/demo_mobile_data.csv\n",
@@ -75,12 +82,19 @@ def test_nebula_config_contract_loads_primary_agent():
     assert agent["topics"] == "nebula_summary_topics"
     assert agent["sensor_layout"] == "nebula_summary_workspace"
     assert expanded["sensor_layout"]["nebula_latest_csv"]["ui_widget"] == "summary_value"
+    assert expanded["sensor_layout"]["record_timer"]["ui_widget"] == "value"
+    assert expanded["sensor_layout"]["time_delay"]["ui_widget"] == "value"
+    assert {topic["name"] for topic in expanded["topics"]} >= {
+        "record_timer",
+        "time_delay",
+        "node_cookie",
+    }
     assert all("port" not in topic for topic in expanded["topics"])
 
 
 def test_get_runtime_state_returns_latest_csv_summary(monkeypatch, tmp_path):
     install_adb_mocks(monkeypatch)
-    node, _ = make_node(tmp_path)
+    node, runtime = make_node(tmp_path)
     node.serial = "USB123"
 
     result = node.get_runtime_state({})
@@ -91,6 +105,10 @@ def test_get_runtime_state_returns_latest_csv_summary(monkeypatch, tmp_path):
     assert result["latest_csv_lines"]["demo_air_data.csv"] == "air_last_row"
     assert result["latest_csv_lines"]["demo_mobile_data.csv"] == "mobile_last_row"
     assert result["latest_update_time"]
+    delay_payloads = [data for topic, data in runtime.published if topic == "time_delay"]
+    assert delay_payloads
+    assert delay_payloads[-1]["status"] == "unavailable"
+    assert delay_payloads[-1]["time_delay_ns"] == 0
 
 
 def test_check_stays_health_only(monkeypatch, tmp_path):

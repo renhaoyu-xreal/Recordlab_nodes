@@ -5,9 +5,7 @@
 from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
 from nviz_ur_base import (
     build_record_dataset_name,
-    check_required_script_agents,
     extract_root_path,
-    get_script_agent,
     get_program_config,
     safe_exit_nviz,
     wait_for_command,
@@ -16,6 +14,7 @@ from scripts.common.record_path_helper import (
     resolve_record_glasses_fsn,
     resolve_record_glasses_label,
 )
+from scripts.common.script_agent_helpers import check_required_script_agents, get_script_agent
 
 
 all_agent_names = ['glasses_nviz_node', 'UR_node', 'localhost']
@@ -24,6 +23,7 @@ print(f"[batch_recording] Starting batch recording script...")
 print(f"[batch_recording] Available agents: {all_agent_names}")
 
 cleanup_nviz = False
+keep_device_connected = False
 
 initial_steps = [
     WorkflowStep.NODES_CHECK,
@@ -50,7 +50,11 @@ def fail_if_unavailable_agents():
         set_step(WorkflowStep.NODES_CHECK, "failed", error_message)
         finish(False, error_message)
         raise SystemExit(1)
-    ready, message = check_required_script_agents(script_agents, all_agent_names)
+    ready, message = check_required_script_agents(
+        script_agents,
+        all_agent_names,
+        unavailable_script_agents=unavailable,
+    )
     if not ready:
         set_step(WorkflowStep.NODES_CHECK, "failed", message)
         finish(False, message)
@@ -340,15 +344,7 @@ try:
                                 error_message = f"停止视频失败: {stop_video_result}"
                             set_step(WorkflowStep.PLAY_VIDEO, "failed", error_message)
 
-                    set_step(WorkflowStep.STOP_DEVICE, "running", "正在停止设备")
-                    stop_device_result = glasses_agent.cmd("stop_device")
-                    if stop_device_result.get("success"):
-                        set_step(WorkflowStep.STOP_DEVICE, "success", "stop_device 成功")
-                    else:
-                        run_success = False
-                        if not error_message:
-                            error_message = f"stop_device 失败: {stop_device_result}"
-                        set_step(WorkflowStep.STOP_DEVICE, "failed", f"stop_device 失败: {stop_device_result}")
+                    set_step(WorkflowStep.STOP_DEVICE, "success", "本条录制完成，设备保持连接")
 
                     if final_record_time is not None and final_record_time > 0:
                         wait_for_flush = max(1.0, min(final_record_time * 0.1, 5.0))
@@ -421,6 +417,7 @@ try:
             print(f"[batch_recording] 成功: {success_count} 个")
             print(f"[batch_recording] 失败: {failed_count} 个")
             print(f"[batch_recording] ========================================")
+            keep_device_connected = failed_count == 0 and success_count > 0
 
 except Exception as e:
     print(f"[batch_recording] 脚本执行出错: {e}")
@@ -430,7 +427,7 @@ except Exception as e:
         except Exception:
             pass
 finally:
-    if cleanup_nviz:
+    if cleanup_nviz and not keep_device_connected:
         try:
             safe_exit_nviz(glasses_agent, "批量录制脚本结束清理")
         except Exception:

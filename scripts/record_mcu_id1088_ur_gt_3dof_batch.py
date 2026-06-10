@@ -89,6 +89,9 @@ def parse_trajectory_list(traj_list_str):
     return result
 
 
+glasses_agent = None
+keep_device_connected = False
+
 try:
     fail_if_unavailable_agents()
 
@@ -452,15 +455,7 @@ try:
                             error_message = f"copy_ur_files failed: {copy_result}"
                         set_step(WorkflowStep.COPY_UR_FILES, "failed", error_message)
 
-                    set_step(WorkflowStep.STOP_DEVICE, "running", "Stopping device")
-                    stop_device_result = glasses_agent.cmd("stop_device")
-                    if stop_device_result.get("success"):
-                        set_step(WorkflowStep.STOP_DEVICE, "success", "stop_device success")
-                    else:
-                        run_success = False
-                        if not error_message:
-                            error_message = f"stop_device failed: {stop_device_result}"
-                        set_step(WorkflowStep.STOP_DEVICE, "failed", error_message)
+                    set_step(WorkflowStep.STOP_DEVICE, "success", "Trajectory done, device kept connected")
 
                     if run_success:
                         success_count += 1
@@ -503,6 +498,7 @@ try:
             print(f"[bsp_batch_recording] Success: {success_count}")
             print(f"[bsp_batch_recording] Failed: {failed_count}")
             print("[bsp_batch_recording] ========================================")
+            keep_device_connected = failed_count == 0 and success_count > 0
 
 except Exception as e:
     print(f"[bsp_batch_recording] Script error: {e}")
@@ -512,6 +508,7 @@ except Exception as e:
         pass
 finally:
     try:
-        safe_exit_bsp(glasses_agent, "Batch recording cleanup")
+        if not keep_device_connected:
+            safe_exit_bsp(glasses_agent, "Batch recording cleanup")
     except Exception:
         pass

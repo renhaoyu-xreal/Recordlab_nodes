@@ -1,57 +1,77 @@
-import time
+from flowagent.core.script_workflow import WorkflowStep, finish, set_step
 
 from bsp_script_common import (
-    AgentClient,
-    RecordingGuard,
     begin_bsp_workflow,
     build_dataset_name,
-    finish_bsp_workflow,
-    mark_bsp_connect_failed,
-    mark_bsp_connected,
+    prompt_bsp_record_context,
+    require_bsp_agent,
+    run_timed_record_loop,
+    start_record_or_fail,
+    stop_record,
 )
-from flowagent.core.script_workflow import WorkflowStep, set_step
 
 
-def main():
-    print("[BSP_IMU] free record BSP IMU")
-    begin_bsp_workflow("BSP IMU 自由录制", [WorkflowStep.START_RECORD, WorkflowStep.STOP_RECORD])
-    dataset_name, glasses_id = build_dataset_name("free_record/only_imu")
-    print(f"[BSP_IMU] glasses_id={glasses_id}")
-    print(f"[BSP_IMU] dataset=data/{dataset_name}")
-    agent = None
-    guard = None
-    try:
-        agent = AgentClient()
-        mark_bsp_connected()
-        guard = RecordingGuard(agent)
-        guard.install_signal_handlers()
-        set_step(WorkflowStep.START_RECORD, "running", "正在开始 BSP IMU 录制")
-        result = guard.start({
-            "dataset_name": dataset_name,
-            "enable_camera_snapshot": True,
-            "enable_screen_capture": True,
-            "enable_mic_recording": True,
-        })
-        if not result.get("success"):
-            set_step(WorkflowStep.START_RECORD, "failed", result.get("message", "start_record failed"))
-            finish_bsp_workflow(False, result.get("message", "start_record failed"))
-            raise SystemExit(result.get("message", "start_record failed"))
-        set_step(WorkflowStep.START_RECORD, "running", "录制中")
-        while True:
-            time.sleep(1)
-            print("[BSP_IMU] recording...", flush=True)
-    except Exception as exc:
-        mark_bsp_connect_failed(str(exc))
-        raise
-    finally:
-        if guard and guard.recording:
-            set_step(WorkflowStep.STOP_RECORD, "running", "正在停止录制")
-            guard.stop()
-            set_step(WorkflowStep.STOP_RECORD, "success", "录制已停止")
-            finish_bsp_workflow(False, "脚本已停止")
-        if agent:
-            agent.close()
+all_agent_names = ["glasses_bsp_node"]
 
+print("[BSP_IMU] timed record BSP IMU")
 
-if __name__ == "__main__":
-    main()
+begin_bsp_workflow("BSP IMU 定时录制", [WorkflowStep.CHECK, WorkflowStep.START_RECORD, WorkflowStep.STOP_RECORD])
+glasses_bsp_node = require_bsp_agent(script_agents, globals().get("unavailable_script_agents"))
+
+set_step(WorkflowStep.CHECK, "running", "正在填写录制信息")
+try:
+    context = prompt_bsp_record_context(
+        dialog,
+        title="BSP IMU 录制信息",
+        message="请填写实验关键字、录制人和录制时长",
+        include_duration=True,
+    )
+except ValueError as exc:
+    set_step(WorkflowStep.CHECK, "failed", str(exc))
+    finish(False, str(exc))
+    raise SystemExit(1)
+
+if context is None:
+    set_step(WorkflowStep.CHECK, "failed", "已取消录制信息输入")
+    finish(False, "已取消录制信息输入")
+    raise SystemExit(1)
+
+dataset_name, glasses_id = build_dataset_name("free_record/only_imu", context, glasses_bsp_node)
+record_duration_s = float(context["record_duration_s"])
+
+print(f"[BSP_IMU] 当前眼镜标识: {glasses_id}")
+print(f"[BSP_IMU] 实验关键字: {context['experiment_keyword']}")
+print(f"[BSP_IMU] 录制人: {context['recorder_name']}")
+print(f"[BSP_IMU] 录制时长: {record_duration_s:.1f} 秒")
+print(f"[BSP_IMU] 数据将保存到: data/{dataset_name}/")
+set_step(WorkflowStep.CHECK, "success", f"录制信息已确认: {dataset_name}")
+
+clear_record_timer()
+start_record_or_fail(
+    glasses_bsp_node,
+    {
+        "dataset_name": dataset_name,
+        "enable_camera_snapshot": True,
+        "enable_screen_capture": True,
+        "enable_mic_recording": True,
+    },
+    "正在开始 BSP IMU 录制",
+)
+
+set_step(WorkflowStep.START_RECORD, "running", "录制中")
+run_timed_record_loop(
+    record_duration_s,
+    record_timer_func=record_timer,
+    status_formatter=lambda elapsed: (
+        print(f"[BSP_IMU] 录制中... {elapsed:.1f}/{record_duration_s:.1f}s", flush=True),
+        set_step(WorkflowStep.START_RECORD, "running", f"录制中: {elapsed:.1f}/{record_duration_s:.1f}s"),
+    ),
+)
+
+stop_result = stop_record(glasses_bsp_node)
+if not stop_result.get("success"):
+    finish(False, stop_result.get("message", "停止录制失败"))
+    raise SystemExit(1)
+
+set_step(WorkflowStep.START_RECORD, "success", "定时录制完成")
+finish(True, "BSP IMU 定时录制完成")

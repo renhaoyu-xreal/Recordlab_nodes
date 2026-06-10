@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from recordlab_nodes.common.topics import TOPIC_ANDROID_IMU, TOPIC_NODE_COOKIE, TOPIC_RECORD_TIMER
+from recordlab_nodes.common.topics import TOPIC_ANDROID_IMU, TOPIC_NODE_COOKIE, TOPIC_RECORD_TIMER, TOPIC_TIME_DELAY
 from recordlab_nodes.core.main_node import MainNode
 from recordlab_nodes.core.record_writers import CsvDataWriter
 from recordlab_nodes.protocols.nreal_link.nreal_link_tcp import NrealLinkTcpServer
@@ -325,6 +325,15 @@ fi
             "data": [float(d0), float(d1), float(d2), float(d3), float(d4), float(d5)],
         }
         self.publish(TOPIC_ANDROID_IMU, data)
+        now_ns = time.time_ns()
+        payload_timestamp_ns = int(timestamp_ns)
+        delay_ns = max(0, now_ns - payload_timestamp_ns) if payload_timestamp_ns > 0 else 0
+        self.publish(TOPIC_TIME_DELAY, {
+            "name": TOPIC_TIME_DELAY,
+            "timestamp_ns": now_ns,
+            "time_delay_ns": delay_ns,
+            "status": "valid" if payload_timestamp_ns > 0 else "unavailable",
+        })
         with self.record_state_lock:
             if self.recording:
                 self.csv_writer.write_data({
@@ -339,7 +348,6 @@ fi
                     "data4": float(d4),
                     "data5": float(d5),
                 })
-                now_ns = time.time_ns()
                 duration_ns = now_ns - self.record_start_ns if self.record_start_ns else 0
                 self.publish(TOPIC_RECORD_TIMER, {
                     "name": TOPIC_RECORD_TIMER,

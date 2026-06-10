@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import threading
 import time
@@ -6,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from recordlab_nodes.common.topics import TOPIC_RECORD_TIMER
+from recordlab_nodes.common.topics import TOPIC_RECORD_TIMER, TOPIC_TIME_DELAY
 from recordlab_nodes.core.main_node import MainNode
 
 PACKAGE = "com.xreal.evapro.nebula"
@@ -249,6 +250,7 @@ class NebulaNode(MainNode):
             self._last_csv_rows = csv_rows
             latest_lines = self.read_remote_latest_csv_lines(serial, self.remote_dir)
             latest_update_time = datetime.now().strftime("%H:%M:%S") if latest_lines else ""
+            self._publish_time_delay(latest_lines)
             return {
                 **base,
                 "success": True,
@@ -259,6 +261,7 @@ class NebulaNode(MainNode):
                 "latest_update_time": latest_update_time,
             }
         except Exception as exc:
+            self._publish_time_delay({})
             return {
                 **base,
                 "success": True,
@@ -497,3 +500,38 @@ class NebulaNode(MainNode):
 
     def get_runtime_state(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return self._summary_state()
+
+    def _publish_time_delay(self, latest_lines: dict[str, str]) -> None:
+        now = now_ns()
+        latest_timestamp_ns = self._extract_latest_timestamp_ns(latest_lines)
+        if latest_timestamp_ns is None:
+            self.publish(TOPIC_TIME_DELAY, {
+                "name": TOPIC_TIME_DELAY,
+                "timestamp_ns": now,
+                "time_delay_ns": 0,
+                "status": "unavailable",
+            })
+            return
+        self.publish(TOPIC_TIME_DELAY, {
+            "name": TOPIC_TIME_DELAY,
+            "timestamp_ns": now,
+            "time_delay_ns": max(0, now - latest_timestamp_ns),
+            "status": "estimated",
+        })
+
+    @staticmethod
+    def _extract_latest_timestamp_ns(latest_lines: dict[str, str]) -> Optional[int]:
+        candidates: list[int] = []
+        for line in latest_lines.values():
+            for token in re.findall(r"\d+", str(line)):
+                try:
+                    value = int(token)
+                except ValueError:
+                    continue
+                if value >= 10**16:
+                    candidates.append(value)
+                elif value >= 10**13:
+                    candidates.append(value * 1000)
+        if not candidates:
+            return None
+        return max(candidates)

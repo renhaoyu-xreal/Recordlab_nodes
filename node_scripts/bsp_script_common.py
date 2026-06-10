@@ -1,146 +1,186 @@
 import getpass
-import json
-import os
-import re
-import signal
-import sys
-import time
-from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
-import paramiko
+from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
+from scripts.common.record_path_helper import build_bsp_dataset_name, sanitize_record_token
+from scripts.common.script_agent_helpers import check_required_script_agents, get_script_agent
 
-nodes_root = Path(__file__).resolve().parents[1]
-if str(nodes_root) not in sys.path:
-    sys.path.insert(0, str(nodes_root))
-echo_python = Path(os.environ.get("ECHO_MESSAGE_SYSTEM_PYTHON_ROOT", str(nodes_root.parent / "echo_message_system" / "python")))
-if echo_python.exists() and str(echo_python) not in sys.path:
-    sys.path.insert(0, str(echo_python))
-
-from message_system import ActionClient  # noqa: E402
-from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps  # noqa: E402
-
-UNKNOWN_GLASSES_ID = "UNKNOWN_GLASSES"
+DEFAULT_DURATION_S = 10.0
+_LAST_EXPERIMENT_KEYWORD = sanitize_record_token("exp", "exp")
+_LAST_RECORDER_NAME = sanitize_record_token(getpass.getuser(), "user")
+_LAST_DURATION_TEXT = "10"
 
 
-def begin_bsp_workflow(title: str, steps):
+def begin_bsp_workflow(title: str, steps: Iterable[WorkflowStep]) -> None:
     set_steps([WorkflowStep.NODES_CHECK, *steps], title=title)
-    set_step(WorkflowStep.NODES_CHECK, "running", "正在连接 BSP 节点")
+    set_step(WorkflowStep.NODES_CHECK, "running", "正在检查 BSP 节点")
 
 
-def mark_bsp_connected():
-    set_step(WorkflowStep.NODES_CHECK, "success", "BSP 节点已连接")
-
-
-def mark_bsp_connect_failed(message: str):
-    set_step(WorkflowStep.NODES_CHECK, "failed", message)
-    finish(False, message)
-
-
-def finish_bsp_workflow(success: bool, message: str):
+def finish_bsp_workflow(success: bool, message: str) -> None:
     finish(success, message)
 
 
-def sanitize_token(value: Optional[str], fallback: str) -> str:
-    text = str(value or "").strip()
-    text = re.sub(r"[\\/\\s]+", "_", text)
-    text = re.sub(r"[^0-9A-Za-z._\\-\u4e00-\u9fa5]+", "_", text)
-    text = text.strip("._-")
-    return text or fallback
+def fail_bsp_workflow(step: WorkflowStep, message: str, exit_code: int = 1) -> None:
+    set_step(step, "failed", message)
+    finish(False, message)
+    raise SystemExit(exit_code)
 
 
-def read_glasses_id_via_ssh(timeout_s: float = 3.0) -> Optional[str]:
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        ssh.connect("169.254.2.1", port=22, username="root", password="xreal2017", timeout=timeout_s)
-        for command in ("/usr/usrdata/bin/getprop ro.bsp.glasses_id", "cat /factory/glasses_config.json 2>/dev/null"):
-            stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout_s)
-            output = stdout.read().decode("utf-8", errors="ignore").strip()
-            if not output:
-                continue
-            if output.startswith("{"):
-                try:
-                    config = json.loads(output)
-                    value = config.get("FSN") or config.get("glasses_id")
-                    if value:
-                        return sanitize_token(value, UNKNOWN_GLASSES_ID)
-                except Exception:
-                    pass
-            return sanitize_token(output, UNKNOWN_GLASSES_ID)
-    except Exception:
-        return None
-    finally:
-        try:
-            ssh.close()
-        except Exception:
-            pass
-    return None
+def require_bsp_agent(
+    script_agents: Dict[str, Any],
+    unavailable_script_agents: Optional[Dict[str, str]] = None,
+    timeout: float = 2.0,
+):
+    unavailable = unavailable_script_agents or {}
+    if unavailable:
+        lines = ["当前脚本缺失以下 node:"]
+        for agent_name, reason in unavailable.items():
+            lines.append(f"- {agent_name}: {reason}")
+        fail_bsp_workflow(WorkflowStep.NODES_CHECK, "\n".join(lines))
+
+    ready, message = check_required_script_agents(
+        script_agents,
+        ["glasses_bsp_node"],
+        timeout=timeout,
+        unavailable_script_agents=unavailable,
+    )
+    if not ready:
+        fail_bsp_workflow(WorkflowStep.NODES_CHECK, message)
+
+    agent = get_script_agent(script_agents, "glasses_bsp_node")
+    if agent is None:
+        fail_bsp_workflow(WorkflowStep.NODES_CHECK, "缺少 node: glasses_bsp_node")
+
+    set_step(WorkflowStep.NODES_CHECK, "success", message)
+    return agent
 
 
-def build_dataset_name(sub_path: str, experiment_keyword: Optional[str] = None, recorder_name: Optional[str] = None) -> Tuple[str, str]:
-    glasses_id = read_glasses_id_via_ssh() or UNKNOWN_GLASSES_ID
-    exp = sanitize_token(experiment_keyword or os.environ.get("RECORDLAB_BSP_EXPERIMENT_KEYWORD", "exp"), "exp")
-    recorder = sanitize_token(recorder_name or os.environ.get("RECORDLAB_BSP_RECORDER_NAME") or os.environ.get("USER") or getpass.getuser(), "user")
-    clean_path = str(sub_path).strip("/\\")
-    leaf_token = sanitize_token(clean_path.replace("/", "_"), "record")
-    timestamp = time.strftime("%Y%m%d%H%M%S")
-    leaf = f"{glasses_id}_{exp}_{recorder}_{leaf_token}_{timestamp}"
-    return f"{clean_path}/{leaf}", glasses_id
+def unwrap_cmd_result(result: Any) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return {"success": False, "message": str(result)}
+    payload = result.get("result")
+    if isinstance(payload, dict):
+        merged = dict(payload)
+        merged.setdefault("success", bool(result.get("success", False)))
+        merged.setdefault("message", result.get("message", ""))
+        return merged
+    return result
 
 
-class AgentClient:
-    def __init__(self):
-        config_path = Path(os.environ.get("RECORDLAB_AGENTS_CONFIG", str(nodes_root / "config" / "agents_config.json")))
-        agent_name = os.environ.get("RECORDLAB_AGENT", "glasses_bsp_node")
-        config = json.loads(config_path.read_text(encoding="utf-8"))["agents"][agent_name]
-        self.client = ActionClient(
-            name=f"{agent_name}_script_client",
-            action_name=config.get("action_name", f"{agent_name}_actions"),
-            goal_host=config.get("subnode_host", "127.0.0.1"),
-            goal_port=int(config["goal_port"]),
-            feedback_host=config.get("subnode_host", "127.0.0.1"),
-            feedback_port=int(config["feedback_port"]),
-            timeout=5000,
+def prompt_bsp_record_context(
+    dialog_api: Any,
+    *,
+    title: str,
+    message: str,
+    include_duration: bool = False,
+    default_duration_s: float = DEFAULT_DURATION_S,
+) -> Optional[Dict[str, Any]]:
+    global _LAST_DURATION_TEXT, _LAST_EXPERIMENT_KEYWORD, _LAST_RECORDER_NAME
+
+    fields = [
+        {
+            "name": "experiment_keyword",
+            "label": "实验关键字",
+            "default": _LAST_EXPERIMENT_KEYWORD,
+        },
+        {
+            "name": "recorder_name",
+            "label": "录制人",
+            "default": _LAST_RECORDER_NAME,
+        },
+    ]
+    if include_duration:
+        fields.append(
+            {
+                "name": "record_duration_s",
+                "label": "录制时长(秒)",
+                "default": _LAST_DURATION_TEXT or str(default_duration_s),
+            }
         )
-        if not self.client.wait_for_server(timeout=5000):
-            raise RuntimeError("action server not available")
-        self.client.start_listening()
-        time.sleep(0.2)
 
-    def cmd(self, name: str, params=None, timeout=10000):
-        goal_id = self.client.send_goal({"cmd": name, "params": params or {}})
-        result, status = self.client.wait_for_result(goal_id, timeout=timeout)
-        print(f"{name}: {json.dumps(result, ensure_ascii=False)}", flush=True)
-        return result or {"success": False, "message": str(status)}
+    if dialog_api is None:
+        result = {
+            "experiment_keyword": _LAST_EXPERIMENT_KEYWORD,
+            "recorder_name": _LAST_RECORDER_NAME,
+        }
+        if include_duration:
+            result["record_duration_s"] = _LAST_DURATION_TEXT or str(default_duration_s)
+    else:
+        result = dialog_api.multi_field_input(title, message, fields)
+        if not result:
+            return None
 
-    def close(self):
-        self.client.close()
+    experiment_keyword = sanitize_record_token(result.get("experiment_keyword"), _LAST_EXPERIMENT_KEYWORD)
+    recorder_name = sanitize_record_token(result.get("recorder_name"), _LAST_RECORDER_NAME)
+
+    context: Dict[str, Any] = {
+        "experiment_keyword": experiment_keyword,
+        "recorder_name": recorder_name,
+    }
+
+    if include_duration:
+        duration_text = str(result.get("record_duration_s") or _LAST_DURATION_TEXT or default_duration_s).strip()
+        try:
+            duration_s = float(duration_text)
+        except ValueError as exc:
+            raise ValueError(f"录制时长必须是数字，当前输入: {duration_text or '<empty>'}") from exc
+        if duration_s <= 0:
+            raise ValueError(f"录制时长必须大于 0，当前输入: {duration_text}")
+        context["record_duration_s"] = duration_s
+        context["record_duration_text"] = duration_text
+        _LAST_DURATION_TEXT = duration_text
+
+    _LAST_EXPERIMENT_KEYWORD = experiment_keyword
+    _LAST_RECORDER_NAME = recorder_name
+    return context
 
 
-class RecordingGuard:
-    def __init__(self, agent: AgentClient):
-        self.agent = agent
-        self.recording = False
+def build_dataset_name(sub_path: str, context: Dict[str, Any], agent: Any, *, leaf_token_override: Optional[str] = None) -> Tuple[str, str]:
+    return build_bsp_dataset_name(
+        sub_path,
+        experiment_keyword=context.get("experiment_keyword"),
+        recorder_name=context.get("recorder_name"),
+        leaf_token_override=leaf_token_override,
+        agent=agent,
+        agent_names=("glasses_bsp_node",),
+    )
 
-    def start(self, params):
-        result = self.agent.cmd("start_record", params)
-        if result.get("success"):
-            self.recording = True
+
+def start_record_or_fail(agent: Any, params: Dict[str, Any], message: str) -> Dict[str, Any]:
+    set_step(WorkflowStep.START_RECORD, "running", message)
+    result = unwrap_cmd_result(agent.cmd("start_record", params))
+    if not result.get("success"):
+        fail_bsp_workflow(WorkflowStep.START_RECORD, result.get("message", "start_record failed"))
+    return result
+
+
+def stop_record(agent: Any, message: str = "正在停止录制") -> Dict[str, Any]:
+    set_step(WorkflowStep.STOP_RECORD, "running", message)
+    result = unwrap_cmd_result(agent.cmd("stop_record", {}))
+    if not result.get("success"):
+        set_step(WorkflowStep.STOP_RECORD, "failed", result.get("message", "stop_record failed"))
         return result
+    set_step(WorkflowStep.STOP_RECORD, "success", "录制已停止")
+    return result
 
-    def stop(self):
-        if self.recording:
-            result = self.agent.cmd("stop_record", {}, timeout=30000)
-            self.recording = False
-            return result
-        return {"success": True, "message": "Not recording"}
 
-    def install_signal_handlers(self):
-        def handle_signal(signum, frame):
-            print(f"received signal {signum}, stopping recording", flush=True)
-            self.stop()
-            raise SystemExit(0)
-
-        signal.signal(signal.SIGTERM, handle_signal)
-        signal.signal(signal.SIGINT, handle_signal)
+def run_timed_record_loop(
+    record_duration_s: float,
+    *,
+    record_timer_func,
+    status_formatter,
+    sleep_interval_s: float = 1.0,
+) -> float:
+    elapsed = 0.0
+    while elapsed < record_duration_s:
+        timer_value = record_timer_func()
+        if timer_value is not None and timer_value >= 0:
+            elapsed = float(timer_value)
+        else:
+            elapsed += sleep_interval_s
+        status_formatter(min(elapsed, record_duration_s))
+        if elapsed >= record_duration_s:
+            break
+        import time
+        time.sleep(sleep_interval_s)
+    return elapsed
