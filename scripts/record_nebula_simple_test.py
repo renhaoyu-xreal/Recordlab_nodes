@@ -126,18 +126,16 @@ def _stop_device_if_needed(nebula_agent, device_started):
 def _confirm_nebula_first_run_ready():
     message = (
         "<div style='font-size:18pt; line-height:130%;'>"
-        "<p><b>如果右上角显示不是HEALTHY，请先按下面步骤做完。</b></p>"
+        "<p><b>如果右上角显示不是 HEALTHY，请先按下面步骤做完。</b></p>"
         "<ol>"
         "<li>手机和电脑连接到<b>同一个 WiFi</b>。</li>"
         "<li>用 <b>USB 线</b> 连接手机和电脑。</li>"
         "<li>手机保持<b>解锁亮屏</b>。</li>"
-        "<li>如果手机弹出“是否允许 USB 调试”，请选择<b>允许</b>。同时允许无线调试</li>"
-
-        "<p><b>以上 4 步做完后，等待右上角转为HEALTHY再继续。</b></p>"
-
-        "当右上角显示为HEALTHY时，拔掉手机和电脑的连线，将手机和眼镜用线连接"
+        "<li>如果手机弹出“是否允许 USB 调试”，请选择<b>允许</b>，并允许无线调试。</li>"
         "</ol>"
-
+        "<p><b>以上 4 步做完后，等待右上角转为 HEALTHY 再继续。</b></p>"
+        "<p><b>当右上角显示为 HEALTHY 时，拔掉手机和电脑的连线，"
+        "再将手机和眼镜用线连接。</b></p>"
         "</div>"
     )
     fields = [
@@ -146,6 +144,8 @@ def _confirm_nebula_first_run_ready():
             "label": "确认状态",
             "default": "还没做完，先退出",
             "choices": ["我已经按上面步骤做完", "还没做完，先退出"],
+            "font_size_pt": 32,
+            "min_width": 360,
         }
     ]
     result = dialog.multi_field_input(
@@ -280,7 +280,6 @@ try:
                     error_message = f"init_device 失败: {init_result}"
                     set_step(WorkflowStep.START_DEVICE, "failed", error_message)
                     finish(False, error_message)
-                    raise RuntimeError(error_message)
                 else:
                     start_device_result = nebula_agent.cmd(
                         "start_device",
@@ -289,113 +288,113 @@ try:
                             "remote_dir": remote_dir,
                         },
                     )
-                if not start_device_result.get("success"):
-                    error_message = f"start_device 失败: {start_device_result}"
-                    set_step(WorkflowStep.START_DEVICE, "failed", error_message)
-                    finish(False, error_message)
-                else:
-                    device_started = True
-                    set_step(WorkflowStep.START_DEVICE, "success", "Nebula 已停止并清空旧CSV")
-
-                    set_step(WorkflowStep.START_RECORD, "running", "正在广播启动 Nebula 并开始计时")
-                    start_record_result = nebula_agent.cmd(
-                        "start_record",
-                        {
-                            "trial_id": trial_id,
-                            "delete_remote": delete_remote,
-                        },
-                    )
-                    if not start_record_result.get("success"):
-                        error_message = f"start_record 失败: {start_record_result}"
-                        set_step(WorkflowStep.START_RECORD, "failed", error_message)
+                    if not start_device_result.get("success"):
+                        error_message = f"start_device 失败: {start_device_result}"
+                        set_step(WorkflowStep.START_DEVICE, "failed", error_message)
                         finish(False, error_message)
                     else:
-                        recording_started = True
-                        set_step(
-                            WorkflowStep.START_RECORD,
-                            "running",
-                            f"已广播启动，等待CSV开始增长，超时 {start_timeout_seconds}s",
-                        )
+                        device_started = True
+                        set_step(WorkflowStep.START_DEVICE, "success", "Nebula 已停止并清空旧CSV")
 
-                        csv_started, csv_check = _wait_until_csv_growing(
-                            nebula_agent,
-                            remote_dir,
-                            start_timeout_seconds,
-                        )
-                        if not csv_started:
-                            error_message = f"等待CSV增长超时: {csv_check}"
-                            set_step(WorkflowStep.START_RECORD, "failed", error_message)
-                            finish(False, error_message)
-                            raise RuntimeError(error_message)
-
-                        set_step(
-                            WorkflowStep.START_RECORD,
-                            "success",
-                            f"CSV已开始增长，有效录制中: {duration_seconds}s",
-                        )
-
-                        deadline = monotonic() + duration_seconds
-                        next_log_time = 0.0
-                        while True:
-                            remaining_float = deadline - monotonic()
-                            if remaining_float <= 0:
-                                break
-                            remaining = int(remaining_float + 0.999)
-                            if monotonic() >= next_log_time:
-                                state_result = nebula_agent.cmd("get_runtime_state", {})
-                                elapsed = _safe_float(state_result.get("elapsed_seconds"), 0.0)
-                                print(
-                                    f"[nebula_simple_test] Recording... {remaining}s remaining, "
-                                    f"elapsed={elapsed:.1f}s{_summary_log_text(state_result)}"
-                                )
-                                next_log_time = monotonic() + 1.0
-                            sleep(min(0.1, remaining_float))
-
-                        set_step(WorkflowStep.STOP_RECORD, "running", "正在停止 Nebula 并拉取CSV")
-                        stop_record_result = nebula_agent.cmd(
-                            "stop_record",
+                        set_step(WorkflowStep.START_RECORD, "running", "正在广播启动 Nebula 并开始计时")
+                        start_record_result = nebula_agent.cmd(
+                            "start_record",
                             {
-                                "remote_dir": remote_dir,
+                                "trial_id": trial_id,
                                 "delete_remote": delete_remote,
-                                "require_mobile_csv": True,
-                                "require_air_csv": require_air_csv,
                             },
                         )
-                        recording_started = False
-                        if not stop_record_result.get("success"):
-                            error_message = f"stop_record 失败: {stop_record_result}"
-                            set_step(WorkflowStep.STOP_RECORD, "failed", error_message)
+                        if not start_record_result.get("success"):
+                            error_message = f"start_record 失败: {start_record_result}"
+                            set_step(WorkflowStep.START_RECORD, "failed", error_message)
                             finish(False, error_message)
                         else:
-                            trial_dir = stop_record_result.get("trial_dir", "")
-                            pulled_files = stop_record_result.get("pulled_files", [])
-                            set_step(WorkflowStep.STOP_RECORD, "success", f"CSV 已保存: {trial_dir}")
+                            recording_started = True
+                            set_step(
+                                WorkflowStep.START_RECORD,
+                                "running",
+                                f"已广播启动，等待CSV开始增长，超时 {start_timeout_seconds}s",
+                            )
 
-                            set_step(WorkflowStep.STOP_DEVICE, "running", "正在停止 Nebula")
-                            stop_device_result = nebula_agent.cmd("stop_device", {})
-                            device_started = False
-                            if not stop_device_result.get("success"):
-                                error_message = f"stop_device 失败: {stop_device_result}"
-                                set_step(WorkflowStep.STOP_DEVICE, "failed", error_message)
+                            csv_started, csv_check = _wait_until_csv_growing(
+                                nebula_agent,
+                                remote_dir,
+                                start_timeout_seconds,
+                            )
+                            if not csv_started:
+                                error_message = f"等待CSV增长超时: {csv_check}"
+                                set_step(WorkflowStep.START_RECORD, "failed", error_message)
+                                finish(False, error_message)
+                                raise RuntimeError(error_message)
+
+                            set_step(
+                                WorkflowStep.START_RECORD,
+                                "success",
+                                f"CSV已开始增长，有效录制中: {duration_seconds}s",
+                            )
+
+                            deadline = monotonic() + duration_seconds
+                            next_log_time = 0.0
+                            while True:
+                                remaining_float = deadline - monotonic()
+                                if remaining_float <= 0:
+                                    break
+                                remaining = int(remaining_float + 0.999)
+                                if monotonic() >= next_log_time:
+                                    state_result = nebula_agent.cmd("get_runtime_state", {})
+                                    elapsed = _safe_float(state_result.get("elapsed_seconds"), 0.0)
+                                    print(
+                                        f"[nebula_simple_test] Recording... {remaining}s remaining, "
+                                        f"elapsed={elapsed:.1f}s{_summary_log_text(state_result)}"
+                                    )
+                                    next_log_time = monotonic() + 1.0
+                                sleep(min(0.1, remaining_float))
+
+                            set_step(WorkflowStep.STOP_RECORD, "running", "正在停止 Nebula 并拉取CSV")
+                            stop_record_result = nebula_agent.cmd(
+                                "stop_record",
+                                {
+                                    "remote_dir": remote_dir,
+                                    "delete_remote": delete_remote,
+                                    "require_mobile_csv": True,
+                                    "require_air_csv": require_air_csv,
+                                },
+                            )
+                            recording_started = False
+                            if not stop_record_result.get("success"):
+                                error_message = f"stop_record 失败: {stop_record_result}"
+                                set_step(WorkflowStep.STOP_RECORD, "failed", error_message)
                                 finish(False, error_message)
                             else:
-                                set_step(WorkflowStep.STOP_DEVICE, "success", "Nebula 已停止")
+                                trial_dir = stop_record_result.get("trial_dir", "")
+                                pulled_files = stop_record_result.get("pulled_files", [])
+                                set_step(WorkflowStep.STOP_RECORD, "success", f"CSV 已保存: {trial_dir}")
 
-                                set_step(WorkflowStep.GET_ROOT_PATH, "running", "正在获取保存路径")
-                                root_path_result = nebula_agent.cmd("get_root_path", {})
-                                root_path = _extract_root_path(root_path_result)
-                                if trial_dir:
-                                    print(f"[nebula_simple_test] Saved dir: {trial_dir}")
-                                    for path in pulled_files:
-                                        print(f"[nebula_simple_test] Pulled: {path}")
-                                    set_step(WorkflowStep.GET_ROOT_PATH, "success", trial_dir)
-                                    finish(True, f"录制完成: {trial_dir}")
-                                elif root_path:
-                                    set_step(WorkflowStep.GET_ROOT_PATH, "success", root_path)
-                                    finish(True, f"录制完成: {root_path}")
+                                set_step(WorkflowStep.STOP_DEVICE, "running", "正在停止 Nebula")
+                                stop_device_result = nebula_agent.cmd("stop_device", {})
+                                device_started = False
+                                if not stop_device_result.get("success"):
+                                    error_message = f"stop_device 失败: {stop_device_result}"
+                                    set_step(WorkflowStep.STOP_DEVICE, "failed", error_message)
+                                    finish(False, error_message)
                                 else:
-                                    set_step(WorkflowStep.GET_ROOT_PATH, "success", "录制完成，未获取到root_path")
-                                    finish(True, "录制完成")
+                                    set_step(WorkflowStep.STOP_DEVICE, "success", "Nebula 已停止")
+
+                                    set_step(WorkflowStep.GET_ROOT_PATH, "running", "正在获取保存路径")
+                                    root_path_result = nebula_agent.cmd("get_root_path", {})
+                                    root_path = _extract_root_path(root_path_result)
+                                    if trial_dir:
+                                        print(f"[nebula_simple_test] Saved dir: {trial_dir}")
+                                        for path in pulled_files:
+                                            print(f"[nebula_simple_test] Pulled: {path}")
+                                        set_step(WorkflowStep.GET_ROOT_PATH, "success", trial_dir)
+                                        finish(True, f"录制完成: {trial_dir}")
+                                    elif root_path:
+                                        set_step(WorkflowStep.GET_ROOT_PATH, "success", root_path)
+                                        finish(True, f"录制完成: {root_path}")
+                                    else:
+                                        set_step(WorkflowStep.GET_ROOT_PATH, "success", "录制完成，未获取到root_path")
+                                        finish(True, "录制完成")
 
 except Exception as e:
     print(f"[nebula_simple_test] 脚本执行出错: {e}")
