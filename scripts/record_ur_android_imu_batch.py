@@ -1,17 +1,99 @@
 # Batch recording script: execute UR trajectories sequentially while recording Android IMU.
 # Input format: traj_id-taker_number pairs (e.g., "10-1, 11-2, 13-3")
 
+import json
 import time
 from time import sleep
 
 from flowagent.core.script_workflow import WorkflowStep, finish, set_step, set_steps
-from nviz_ur_base import build_record_dataset_name, get_program_config, wait_for_command
+from scripts.common.script_agent_helpers import check_required_script_agents, get_script_agent
 
 
 all_agent_names = ['UR_node', 'android']
 
 print("[batch_recording_android] Starting UR + Android IMU batch recording script...")
 print(f"[batch_recording_android] Available agents: {all_agent_names}")
+
+initial_steps = [
+    WorkflowStep.NODES_CHECK,
+    WorkflowStep.START_DEVICE,
+    WorkflowStep.MOVE_TO_START,
+    WorkflowStep.START_RECORD,
+    WorkflowStep.EXECUTE_TRAJECTORY,
+    WorkflowStep.STOP_RECORD,
+    WorkflowStep.COPY_UR_FILES,
+]
+set_steps(initial_steps, title="UR + Android IMU 批量录制准备")
+set_step(WorkflowStep.NODES_CHECK, "running", "正在检查节点连接")
+
+
+def fail_if_unavailable_agents():
+    unavailable = globals().get("unavailable_script_agents") or {}
+    ready, message = check_required_script_agents(
+        script_agents,
+        all_agent_names,
+        unavailable_script_agents=unavailable,
+    )
+    if not ready:
+        set_step(WorkflowStep.NODES_CHECK, "failed", message)
+        finish(False, message)
+        raise SystemExit(1)
+    set_step(WorkflowStep.NODES_CHECK, "success", message)
+
+
+def get_program_config(traj_id):
+    traj_map = {
+        10: ("3dof_test_3motion_28", "8-3-0"),
+        11: ("3dof_front_small_motion_28", "8-3-1"),
+        13: ("3dof_left_right_28", "8-3-3"),
+        14: ("3dof_up_down_28", "8-3-4"),
+        0: ("3dof_test_3motion", "8-3-0"),
+        1: ("3dof_front_small_motion", "8-3-1"),
+        3: ("3dof_left_right", "8-3-3"),
+        4: ("3dof_up_down", "8-3-4"),
+        21: ("mag_test1", "9-3-0"),
+    }
+    if traj_id in traj_map:
+        return traj_map[traj_id]
+    print(f"[batch_recording_android] 无效的轨迹ID: {traj_id}，使用默认配置")
+    return "3dof_test_3motion_28", "8-3-0"
+
+
+def build_record_dataset_name(program_id_str, taker_number, experiment_keyword, recorder_name):
+    record_start_time = time.localtime()
+    date_string = time.strftime("%Y%m%d", record_start_time)
+    timestamp_string = time.strftime("%Y%m%d%H%M%S", record_start_time)
+    experiment_token = safe_path_part(experiment_keyword, "test")
+    recorder_token = safe_path_part(recorder_name, "user")
+    record_dir_name = f"{program_id_str}-{taker_number}-{experiment_token}-{recorder_token}-{timestamp_string}"
+    dataset_name = date_string + "/" + record_dir_name
+    return date_string, record_dir_name, dataset_name
+
+
+def wait_for_command(ur_agent, goal_id, command_name="command", progress_interval=100):
+    if not goal_id:
+        print(f"[batch_recording_android] No goal_id for {command_name}, skipping wait")
+        return False
+
+    check_count = 0
+    start_time = time.time()
+    while True:
+        status = ur_agent.check_cmd(goal_id)
+        check_count += 1
+        if status.get("done"):
+            if status.get("status") == "SUCCEEDED":
+                print(f"[batch_recording_android] {command_name} completed successfully")
+                return True
+            print(f"[batch_recording_android] {command_name} failed: {status.get('result')}")
+            return False
+
+        elapsed = time.time() - start_time
+        if check_count % progress_interval == 0:
+            print(
+                f"[batch_recording_android] Waiting for {command_name}... "
+                f"({int(elapsed)}s), last status: {status}"
+            )
+        sleep(1)
 
 
 def parse_trajectory_list(traj_list_str):
@@ -71,6 +153,13 @@ def extract_root_path(result):
     message = result.get("message")
     if isinstance(message, dict):
         return message.get("root_path", "")
+    if isinstance(message, str):
+        try:
+            decoded = json.loads(message)
+            if isinstance(decoded, dict):
+                return decoded.get("root_path", "")
+        except Exception:
+            pass
     return ""
 
 
@@ -158,6 +247,8 @@ fan_cycle_started = False
 gps_cycle_started = False
 
 try:
+    fail_if_unavailable_agents()
+
     fields = [
         {"name": "traj_list", "label": "轨迹列表 (格式: traj_id-taker, 逗号分隔)", "default": "10-1, 11-1, 13-1"},
         {"name": "experiment_keyword", "label": "实验关键字", "default": "test"},
@@ -211,20 +302,8 @@ try:
             success_count = 0
             failed_count = 0
 
-            ur_agent = script_agents.get("ur_node")
-            android_agent = script_agents.get("android")
-
-            initial_steps = [
-                WorkflowStep.NODES_CHECK,
-                WorkflowStep.START_DEVICE,
-                WorkflowStep.MOVE_TO_START,
-                WorkflowStep.START_RECORD,
-                WorkflowStep.EXECUTE_TRAJECTORY,
-                WorkflowStep.STOP_RECORD,
-                WorkflowStep.COPY_UR_FILES,
-            ]
-            set_steps(initial_steps, title="UR + Android IMU 批量录制准备")
-            set_step(WorkflowStep.NODES_CHECK, "running", "正在检查节点连接")
+            ur_agent = get_script_agent(script_agents, "UR_node")
+            android_agent = get_script_agent(script_agents, "android")
 
             missing_agents = []
             if ur_agent is None:
@@ -445,6 +524,10 @@ try:
                             android_root_path_result = android_agent.cmd("get_root_path", {})
                             ur_root_path = extract_root_path(ur_root_path_result)
                             android_root_path = extract_root_path(android_root_path_result)
+                            if not ur_root_path or not android_root_path:
+                                raise RuntimeError(
+                                    f"get_root_path failed: UR={ur_root_path_result}, Android={android_root_path_result}"
+                                )
                             ur_file_path = ur_root_path + "/" + date_string + "/" + file_name + "/*"
                             android_dir_path = android_root_path + "/" + date_string + "/" + file_name + "/"
 
