@@ -328,18 +328,29 @@ class BspDevice:
         camera_mode = params.get("camera_mode", CAMERA_MODE_SLAM)
         if camera_mode not in {CAMERA_MODE_SLAM, CAMERA_MODE_NONE}:
             return {"success": False, "message": "BSP RGB mode is not migrated in this node"}
+
+        # ── Resolve device sensor capabilities from catalog ──
+        catalog_sensors = self._get_catalog_sensors()
+        has_slam = "Slam" in catalog_sensors
+
         sensors = {Xr.SensorType.Imu}
         if camera_mode == CAMERA_MODE_SLAM:
-            sensors.add(Xr.SensorType.Slam)
-        if self.display_enabled:
+            if has_slam:
+                sensors.add(Xr.SensorType.Slam)
+            else:
+                logger.warning("[BspDevice] camera_mode=slam but device has no Slam sensor, downgrading to none")
+                camera_mode = CAMERA_MODE_NONE
+        if self.display_enabled and "Display" in catalog_sensors:
             sensors.add(Xr.SensorType.Display)
+
         result = self.bridge.start_sensors(sensors)
         if not result.get("success"):
             return result
-        result = self.bridge.configure_glasses(self._startup_config())
-        if not result.get("success"):
-            self.bridge.stop_sensors(sensors)
-            return result
+        if camera_mode == CAMERA_MODE_SLAM:
+            result = self.bridge.configure_glasses(self._startup_config())
+            if not result.get("success"):
+                self.bridge.stop_sensors(sensors)
+                return result
         self.camera_mode = camera_mode
         self.start_sensors = sensors
         self.started = True
@@ -558,6 +569,13 @@ class BspDevice:
             config["exposure"] = self.slam_config["exposure"]
         return config
 
+    def _get_catalog_sensors(self) -> set:
+        """Return the set of sensor name strings this device supports, per the USB catalog."""
+        lsusb_info = self.lsusb_checker.check()
+        catalog = lsusb_info.get("catalog", {}) or {}
+        sensors = catalog.get("sensors", [])
+        return set(sensors) if isinstance(sensors, list) else set()
+
     def _refresh_state(self) -> None:
         result = self.bridge.get_glasses_state()
         if result.get("success"):
@@ -569,6 +587,9 @@ class BspDevice:
             timestamp_ns = int(data.hmd_time_ns)
             imu_idx = getattr(data, "imu_idx", 0)
             self.latest_temperatures[f"imu{imu_idx}_temperature"] = float(data.temperature)
+            has_gyro = data.hasGyro()
+            has_acc = data.hasAcc()
+            print(f"[BspDevice] IMU callback: imu_idx={imu_idx} has_gyro={has_gyro} has_acc={has_acc} ts={timestamp_ns}", flush=True)
             if imu_idx == 1:
                 gyro_type, acc_type, mag_type, temp_type = 4, 5, None, 13
             else:

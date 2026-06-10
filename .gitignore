@@ -7,3 +7,4 @@ __pycache__/
 *.so
 CTestTestfile.cmake
 Testing/
+nrsensor_*.txt
