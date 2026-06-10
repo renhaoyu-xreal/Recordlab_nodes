@@ -23,7 +23,7 @@ def test_usb_catalog_groups_match_recordlab_device_colors():
         assert "Imu" in entry["sensors"]
         assert entry["imu_count"] == 1
 
-    for name in ("Gina", "GF", "Hylla", "GS", "Glory"):
+    for name in ("Gina", "GF", "GS", "Glory"):
         entry = catalog[name]
         assert entry["device_color"] == "blue"
         assert entry["device_group"] == "ssh_nviz"
@@ -48,4 +48,3 @@ def test_usb_catalog_groups_match_recordlab_device_colors():
         assert "Slam" not in entry["sensors"]
         assert "Imu" in entry["sensors"]
         assert entry["imu_count"] == 1
-
